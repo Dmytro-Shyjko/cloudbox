@@ -5,7 +5,34 @@
   <h1>Файли</h1>
   <p>Вітаю, <b>{{ username }}</b>. Це приватна сторінка.</p>
 
+  {% if error %}
+    <div class="error">{{ error }}</div>
+  {% endif %}
+  {% if message %}
+    <div class="notice">{{ message }}</div>
+  {% endif %}
+
   <div class="card">
-    <p>Наступний крок: upload/list/download файлів.</p>
+    <h2>Завантажити файл</h2>
+    <form method="post" enctype="multipart/form-data">
+      <input type="file" name="file" required>
+      <button type="submit">Upload</button>
+    </form>
+  </div>
+
+  <div class="card" style="margin-top:16px;">
+    <h2>Мої файли</h2>
+    {% if files and files|length > 0 %}
+      <ul>
+        {% for f in files %}
+          <li>
+            {{ f }}
+            — <a href="{{ url_for('main.download', filename=f) }}">Download</a>
+          </li>
+        {% endfor %}
+      </ul>
+    {% else %}
+      <p class="muted">Поки що файлів немає.</p>
+    {% endif %}
   </div>
 {% endblock %}
