@@ -1,0 +1,28 @@
+{% extends "base.html" %}
+{% set title = "Login" if mode == "login" else "Register" %}
+
+{% block content %}
+  <h1>{{ "Login" if mode == "login" else "Register" }}</h1>
+
+  {% if error %}
+    <div class="error">{{ error }}</div>
+  {% endif %}
+
+  <form method="post" action="{{ url_for('auth.login_post') if mode == 'login' else url_for('auth.register_post') }}" class="card">
+    <label>Username</label>
+    <input name="username" autocomplete="username" required>
+
+    <label>Password</label>
+    <input name="password" type="password" autocomplete="current-password" required>
+
+    <button type="submit">{{ "Login" if mode == "login" else "Create account" }}</button>
+  </form>
+
+  <p class="muted">
+    {% if mode == "login" %}
+      Немає акаунта? <a href="{{ url_for('auth.register_get') }}">Register</a>
+    {% else %}
+      Вже є акаунт? <a href="{{ url_for('auth.login_get') }}">Login</a>
+    {% endif %}
+  </p>
+{% endblock %}
