@@ -1,9 +1,9 @@
 {% extends "base.html" %}
-{% set title = "Files" %}
+{% set title = t("files.title") %}
 
 {% block content %}
-  <h1>Файли</h1>
-  <p>Вітаю, <b>{{ username }}</b>. Це приватна сторінка.</p>
+  <h1>{{ t("files.title") }}</h1>
+  <p>{{ t("files.welcome") }}, <b>{{ username }}</b>. {{ t("files.private") }}</p>
 
   {% if error %}
     <div class="error">{{ error }}</div>
@@ -12,27 +12,80 @@
     <div class="notice">{{ message }}</div>
   {% endif %}
 
-  <div class="card">
-    <h2>Завантажити файл</h2>
-    <form method="post" enctype="multipart/form-data">
-      <input type="file" name="file" required>
-      <button type="submit">Upload</button>
+  <!-- Breadcrumbs -->
+  <div class="card" style="margin-bottom:16px;">
+    <div class="breadcrumbs">
+      <a href="{{ url_for('main.files') }}">/</a>
+      {% for b in breadcrumbs %}
+        <span class="sep">›</span>
+        <a href="{{ url_for('main.files', path=b.path) }}">{{ b.label }}</a>
+      {% endfor %}
+    </div>
+
+    <div class="muted" style="margin-top:8px;">
+      {{ t("folders.current") }}: <b>/{{ path }}</b>
+    </div>
+  </div>
+
+  <!-- Create folder -->
+  <div class="card" style="margin-bottom:16px;">
+    <h2>{{ t("folders.title") }}</h2>
+    <form method="post">
+      <input type="hidden" name="action" value="mkdir">
+      <label>{{ t("folders.new") }}</label>
+      <input name="folder" placeholder="photos" required>
+      <button type="submit">{{ t("folders.create") }}</button>
     </form>
   </div>
 
+  <!-- Upload -->
+  <div class="card" id="upload">
+    <h2>{{ t("files.upload_title") }}</h2>
+    <form method="post" enctype="multipart/form-data">
+      <input type="hidden" name="action" value="upload">
+      <input type="file" name="file" required>
+      <button type="submit">{{ t("nav.upload") }}</button>
+    </form>
+  </div>
+
+  <!-- Listing -->
   <div class="card" style="margin-top:16px;">
-    <h2>Мої файли</h2>
-    {% if files and files|length > 0 %}
+    <h2>{{ t("files.my_files") }}</h2>
+
+    {% if folders and folders|length > 0 %}
+      <h3 class="section-title">{{ t("folders.title") }}</h3>
       <ul>
-        {% for f in files %}
+        {% for d in folders %}
           <li>
-            {{ f }}
-            — <a href="{{ url_for('main.download', filename=f) }}">Download</a>
+            📁 <b>{{ d }}</b>
+            — <a href="{{ url_for('main.files', path=(path ~ '/' ~ d) if path else d) }}">{{ t("folders.open") }}</a>
           </li>
         {% endfor %}
       </ul>
-    {% else %}
-      <p class="muted">Поки що файлів немає.</p>
+    {% endif %}
+
+    {% if files and files|length > 0 %}
+      <h3 class="section-title">{{ t("files.title") }}</h3>
+      <ul>
+        {% for f in files %}
+          {% set full = (path ~ '/' ~ f) if path else f %}
+          <li>
+            {{ f }}
+            — <a href="{{ url_for('main.download', filepath=full) }}">{{ t("files.download") }}</a>
+
+            <form class="inline"
+                  method="post"
+                  action="{{ url_for('main.delete_file', filepath=full, path=path) }}"
+                  onsubmit="return confirm({{ t('files.delete_confirm')|tojson }});">
+              <button class="danger" type="submit">{{ t("files.delete") }}</button>
+            </form>
+          </li>
+        {% endfor %}
+      </ul>
+    {% endif %}
+
+    {% if (not folders or folders|length == 0) and (not files or files|length == 0) %}
+      <p class="muted">{{ t("files.no_files") }}</p>
     {% endif %}
   </div>
 {% endblock %}

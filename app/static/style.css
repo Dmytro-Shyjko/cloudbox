@@ -75,6 +75,15 @@ a {
   font-size: 14px;
 }
 
+/* Language selector */
+.lang select {
+  padding: 6px 10px;
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  background: rgba(255, 255, 255, 0.08);
+  color: white;
+}
+
 /* ===== Headings ===== */
 h1 {
   margin-top: 0;
@@ -131,6 +140,22 @@ button:hover {
   background: #1d4ed8;
 }
 
+/* Inline form for delete button */
+.inline {
+  display: inline;
+  margin-left: 8px;
+}
+
+button.danger {
+  background: #dc2626;
+  padding: 6px 10px;
+  margin-top: 0;
+}
+
+button.danger:hover {
+  background: #b91c1c;
+}
+
 /* ===== Messages ===== */
 .error {
   background: #fee2e2;
@@ -176,4 +201,29 @@ li a:hover {
 /* ===== Footer spacing (future) ===== */
 main.container {
   padding-bottom: 40px;
+}
+.breadcrumbs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+}
+
+.breadcrumbs a {
+  color: #2563eb;
+  text-decoration: none;
+}
+
+.breadcrumbs a:hover {
+  text-decoration: underline;
+}
+
+.sep {
+  color: #6b7280;
+}
+
+.section-title {
+  margin: 14px 0 8px;
+  font-size: 14px;
+  color: #374151;
 }
