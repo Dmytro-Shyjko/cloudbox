@@ -125,6 +125,36 @@ def files():
                     new_dir.mkdir(parents=False, exist_ok=False)
                     message = _t(lang, "msg.uploaded", filename=folder)  # reuse, або зробимо окремий key пізніше
 
+        # RENAME file/folder
+        elif action == "rename":
+            old_name = (request.form.get("old") or "").strip()
+            new_name = (request.form.get("new") or "").strip()
+
+            # rename тільки в поточній папці, без слешів
+            def clean_name(x: str) -> str:
+                x = x.replace("\\", "/").strip()
+                if "/" in x or x in ("", ".", ".."):
+                    return ""
+                return secure_filename(x)
+
+            old_clean = clean_name(old_name)
+            new_clean = clean_name(new_name)
+
+            if not old_clean or not new_clean:
+                error = _t(lang, "err.rename_invalid")
+            else:
+                src = current_dir / old_clean
+                dst = current_dir / new_clean
+
+                if not src.exists():
+                    error = _t(lang, "err.not_found")
+                elif dst.exists():
+                    error = _t(lang, "err.rename_exists")
+                else:
+                    src.rename(dst)
+                    message = _t(lang, "msg.renamed", old=old_clean, new=new_clean)
+
+
         # UPLOAD FILE
         elif action == "upload":
             if "file" not in request.files:

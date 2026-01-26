@@ -3,6 +3,12 @@ DEFAULT_LANG = "uk"
 
 TRANSLATIONS = {
     "en": {
+        "files.rename": "Rename",
+        "files.rename_to": "New name",
+        "folders.rename": "Rename",
+        "msg.renamed": "Renamed: {old} → {new}",
+        "err.rename_invalid": "Invalid new name",
+        "err.rename_exists": "A file/folder with this name already exists",
         "nav.files": "Files",
         "nav.upload": "Upload",
         "nav.login": "Login",
@@ -82,7 +88,12 @@ TRANSLATIONS = {
         "err.bad_path": "Некоректний шлях",
         "err.folder_exists": "Папка вже існує",
         "err.folder_name": "Некоректна назва папки",
-
+        "files.rename": "Перейменувати",
+        "files.rename_to": "Нова назва",
+        "folders.rename": "Перейменувати",
+        "msg.renamed": "Перейменовано: {old} → {new}",
+        "err.rename_invalid": "Некоректна нова назва",
+        "err.rename_exists": "Файл або папка з такою назвою вже існує",
     },
     "de": {
         "nav.files": "Dateien",
@@ -123,7 +134,12 @@ TRANSLATIONS = {
         "err.bad_path": "Ungültiger Pfad",
         "err.folder_exists": "Ordner existiert bereits",
         "err.folder_name": "Ungültiger Ordnername",
-
+        "files.rename": "Umbenennen",
+        "files.rename_to": "Neuer Name",
+        "folders.rename": "Umbenennen",
+        "msg.renamed": "Umbenannt: {old} → {new}",
+        "err.rename_invalid": "Ungültiger neuer Name",
+        "err.rename_exists": "Datei/Ordner mit diesem Namen existiert bereits",
     },
 }
 

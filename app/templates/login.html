@@ -1,28 +1,33 @@
 {% extends "base.html" %}
-{% set title = "Login" if mode == "login" else "Register" %}
+
+{% set title = t("auth.login_title") if mode == "login" else t("auth.register_title") %}
 
 {% block content %}
-  <h1>{{ "Login" if mode == "login" else "Register" }}</h1>
+  <h1>{{ title }}</h1>
 
   {% if error %}
     <div class="error">{{ error }}</div>
   {% endif %}
 
-  <form method="post" action="{{ url_for('auth.login_post') if mode == 'login' else url_for('auth.register_post') }}" class="card">
-    <label>Username</label>
+  <form method="post"
+        action="{{ url_for('auth.login_post') if mode == 'login' else url_for('auth.register_post') }}"
+        class="card">
+    <label>{{ t("auth.username") }}</label>
     <input name="username" autocomplete="username" required>
 
-    <label>Password</label>
+    <label>{{ t("auth.password") }}</label>
     <input name="password" type="password" autocomplete="current-password" required>
 
-    <button type="submit">{{ "Login" if mode == "login" else "Create account" }}</button>
+    <button type="submit">
+      {{ t("auth.login_title") if mode == "login" else t("auth.create_account") }}
+    </button>
   </form>
 
   <p class="muted">
     {% if mode == "login" %}
-      Немає акаунта? <a href="{{ url_for('auth.register_get') }}">Register</a>
+      {{ t("auth.no_account") }} <a href="{{ url_for('auth.register_get') }}">{{ t("auth.register_title") }}</a>
     {% else %}
-      Вже є акаунт? <a href="{{ url_for('auth.login_get') }}">Login</a>
+      {{ t("auth.have_account") }} <a href="{{ url_for('auth.login_get') }}">{{ t("auth.login_title") }}</a>
     {% endif %}
   </p>
 {% endblock %}

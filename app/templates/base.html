@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="uk">
+<html lang="{{ current_lang }}">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
@@ -9,14 +9,34 @@
 <body>
   <header class="header">
     <div class="container header-row">
-      <div class="brand">CloudBox</div>
+      <a class="brand" href="{{ url_for('main.index') }}">CloudBox</a>
+
       <nav class="nav">
+        <!-- Language selector -->
+        <form class="lang" action="#" method="get">
+          <select onchange="window.location.href='/lang/' + this.value;">
+            {% for code in supported_langs %}
+              <option value="{{ code }}" {% if code == current_lang %}selected{% endif %}>
+                {{ code.upper() }}
+              </option>
+            {% endfor %}
+          </select>
+        </form>
+
         {% if session.get("user_id") %}
+          <a class="nav-link {% if request.path.startswith('/files') %}active{% endif %}"
+             href="{{ url_for('main.files') }}">{{ t("nav.files") }}</a>
+
+          <a class="nav-link" href="{{ url_for('main.files') }}#upload">{{ t("nav.upload") }}</a>
+
           <span class="user">👤 {{ session.get("username") }}</span>
-          <a href="{{ url_for('auth.logout') }}">Logout</a>
+          <a class="nav-link" href="{{ url_for('auth.logout') }}">{{ t("nav.logout") }}</a>
         {% else %}
-          <a href="{{ url_for('auth.login_get') }}">Login</a>
-          <a href="{{ url_for('auth.register_get') }}">Register</a>
+          <a class="nav-link {% if request.path.startswith('/login') %}active{% endif %}"
+             href="{{ url_for('auth.login_get') }}">{{ t("nav.login") }}</a>
+
+          <a class="nav-link {% if request.path.startswith('/register') %}active{% endif %}"
+             href="{{ url_for('auth.register_get') }}">{{ t("nav.register") }}</a>
         {% endif %}
       </nav>
     </div>

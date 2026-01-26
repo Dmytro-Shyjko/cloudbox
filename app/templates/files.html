@@ -59,7 +59,18 @@
           <li>
             📁 <b>{{ d }}</b>
             — <a href="{{ url_for('main.files', path=(path ~ '/' ~ d) if path else d) }}">{{ t("folders.open") }}</a>
+
+            <details class="rename">
+              <summary>{{ t("folders.rename") }}</summary>
+              <form method="post" class="rename-form">
+                <input type="hidden" name="action" value="rename">
+                <input type="hidden" name="old" value="{{ d }}">
+                <input name="new" placeholder="{{ t('files.rename_to') }}" required>
+                <button type="submit">{{ t("files.rename") }}</button>
+              </form>
+            </details>
           </li>
+
         {% endfor %}
       </ul>
     {% endif %}
@@ -79,6 +90,16 @@
                   onsubmit="return confirm({{ t('files.delete_confirm')|tojson }});">
               <button class="danger" type="submit">{{ t("files.delete") }}</button>
             </form>
+            <details class="rename">
+              <summary>{{ t("files.rename") }}</summary>
+              <form method="post" class="rename-form">
+                <input type="hidden" name="action" value="rename">
+                <input type="hidden" name="old" value="{{ f }}">
+                <input name="new" placeholder="{{ t('files.rename_to') }}" required>
+                <button type="submit">{{ t("files.rename") }}</button>
+              </form>
+            </details>
+
           </li>
         {% endfor %}
       </ul>

@@ -227,3 +227,34 @@ main.container {
   font-size: 14px;
   color: #374151;
 }
+.rename {
+  display: inline-block;
+  margin-left: 10px;
+}
+
+.rename summary {
+  display: inline-block;
+  cursor: pointer;
+  color: #2563eb;
+  font-size: 14px;
+}
+
+.rename-form {
+  display: inline-flex;
+  gap: 8px;
+  align-items: center;
+  margin-left: 8px;
+}
+
+.rename-form input {
+  width: 180px;
+  padding: 6px 10px;
+  border-radius: 10px;
+  border: 1px solid #d1d5db;
+  font-size: 14px;
+}
+
+.rename-form button {
+  margin-top: 0;
+  padding: 6px 10px;
+}
