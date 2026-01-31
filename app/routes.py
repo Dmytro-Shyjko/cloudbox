@@ -9,6 +9,8 @@ from werkzeug.utils import secure_filename
 
 from .i18n import get_lang, t as _t
 
+import shutil
+
 main_bp = Blueprint("main", __name__)
 
 def login_required(view):
@@ -78,6 +80,18 @@ def breadcrumbs(rel: str):
         acc.append(p)
         out.append({"label": p, "path": "/".join(acc)})
     return out
+
+def all_folders_under(base: Path):
+    """Return list of relative folder paths under user base, sorted."""
+    base = base.resolve()
+    out = []
+    for p in base.rglob("*"):
+        if p.is_dir():
+            rel = p.relative_to(base).as_posix()
+            out.append(rel)
+    out.sort(key=lambda s: s.lower())
+    return out
+
 
 @main_bp.get("/")
 def index():
@@ -154,6 +168,93 @@ def files():
                     src.rename(dst)
                     message = _t(lang, "msg.renamed", old=old_clean, new=new_clean)
 
+        # MOVE file to another folder (relative to user base)
+        elif action == "move":
+            old_name = (request.form.get("old") or "").strip()
+            target_rel = (request.form.get("target") or "").strip()
+
+            def clean_name(x: str) -> str:
+                x = x.replace("\\", "/").strip()
+                if "/" in x or x in ("", ".", ".."):
+                    return ""
+                return secure_filename(x)
+
+            old_clean = clean_name(old_name)
+
+            try:
+                target_rel_clean = safe_rel_path(target_rel)
+                target_dir = resolve_user_path(target_rel_clean)
+            except ValueError:
+                target_dir = None
+
+            if not old_clean:
+                error = _t(lang, "err.not_found")
+            elif not target_rel.strip() and target_rel != "":
+                error = _t(lang, "err.move_no_target")
+            elif target_dir is None or not target_dir.exists() or not target_dir.is_dir():
+                error = _t(lang, "err.move_target_missing")
+            else:
+                src = current_dir / old_clean
+                dst = target_dir / old_clean
+
+                if not src.exists() or not src.is_file():
+                    error = _t(lang, "err.not_found")
+                elif dst.exists():
+                    error = _t(lang, "err.rename_exists")  # вже є такий файл
+                else:
+                    src.rename(dst)
+                    message = _t(lang, "msg.moved", filename=old_clean, target=target_rel_clean)
+
+        # MOVE FOLDER to another folder (relative to user base)
+        elif action == "move_folder":
+            folder_name = (request.form.get("old") or "").strip()
+            target_rel = (request.form.get("target") or "").strip()
+
+            def clean_name(x: str) -> str:
+                x = x.replace("\\", "/").strip()
+                if "/" in x or x in ("", ".", ".."):
+                    return ""
+                return secure_filename(x)
+
+            folder_clean = clean_name(folder_name)
+
+            try:
+                target_rel_clean = safe_rel_path(target_rel)  # "" = root
+                target_dir = resolve_user_path(target_rel_clean)
+            except ValueError:
+                target_dir = None
+                target_rel_clean = ""
+
+            if not folder_clean:
+                error = _t(lang, "err.folder_name")
+            elif target_dir is None or not target_dir.exists() or not target_dir.is_dir():
+                error = _t(lang, "err.move_target_missing")
+            else:
+                src_dir = current_dir / folder_clean
+                if not src_dir.exists() or not src_dir.is_dir():
+                    error = _t(lang, "err.not_found")
+                else:
+                    # абсолютні, щоб перевірити "всередину себе"
+                    src_abs = src_dir.resolve()
+                    target_abs = target_dir.resolve()
+
+                    # 1) target = сама папка
+                    if src_abs == target_abs:
+                        error = _t(lang, "err.move_into_itself")
+
+                    # 2) target всередині src (підпапка)
+                    elif str(target_abs).startswith(str(src_abs) + "/") or str(target_abs).startswith(str(src_abs) + "\\"):
+                        error = _t(lang, "err.move_into_child")
+
+                    else:
+                        # Куди саме переміщаємо: target/<folder_name>
+                        dst_dir = target_dir / folder_clean
+                        if dst_dir.exists():
+                            error = _t(lang, "err.rename_exists")
+                        else:
+                            # shutil.move works across filesystems too
+                            shutil.move(str(src_dir), str(dst_dir))
+                            message = _t(lang, "msg.folder_moved", old=folder_clean, target=(target_rel_clean or ""))
 
         # UPLOAD FILE
         elif action == "upload":
@@ -179,6 +280,8 @@ def files():
         elif item.is_file():
             files_list.append(item.name)
 
+    all_folders = all_folders_under(user_base_dir())
+
     return render_template(
         "files.html",
         username=session.get("username"),
@@ -188,6 +291,7 @@ def files():
         files=files_list,
         error=error,
         message=message,
+        all_folders=all_folders,
     )
 
 @main_bp.get("/download/<path:filepath>")
@@ -230,3 +334,58 @@ def delete_file(filepath):
         return redirect(url_for("main.files", path=back_rel, msg=msg))
 
     return redirect(url_for("main.files", path=back_rel))
+
+@main_bp.post("/delete-folder/<path:folder>")
+@login_required
+def delete_folder(folder):
+    """
+    Delete EMPTY folder only
+    """
+    lang = get_lang(session)
+    back_path = request.args.get("path", "")
+
+    try:
+        folder = safe_rel_path(folder)
+        abs_dir = resolve_user_path(folder)
+    except ValueError:
+        return redirect(url_for("main.files", path=back_path))
+
+    if not abs_dir.exists() or not abs_dir.is_dir():
+        return redirect(url_for("main.files", path=back_path))
+
+    # allow delete only empty folder
+    if any(abs_dir.iterdir()):
+        return redirect(
+            url_for(
+                "main.files",
+                path=back_path,
+                msg=_t(lang, "err.folder_not_empty"),
+            )
+        )
+
+    abs_dir.rmdir()
+    msg = _t(lang, "msg.deleted", filename=abs_dir.name)
+    return redirect(url_for("main.files", path=back_path, msg=msg))
+
+
+@main_bp.post("/delete-folder-recursive/<path:folder>")
+@login_required
+def delete_folder_recursive(folder):
+    """
+    Delete folder WITH ALL CONTENTS
+    """
+    lang = get_lang(session)
+    back_path = request.args.get("path", "")
+
+    try:
+        folder = safe_rel_path(folder)
+        abs_dir = resolve_user_path(folder)
+    except ValueError:
+        return redirect(url_for("main.files", path=back_path))
+
+    if not abs_dir.exists() or not abs_dir.is_dir():
+        return redirect(url_for("main.files", path=back_path))
+
+    shutil.rmtree(abs_dir)
+    msg = _t(lang, "msg.deleted", filename=abs_dir.name)
+    return redirect(url_for("main.files", path=back_path, msg=msg))

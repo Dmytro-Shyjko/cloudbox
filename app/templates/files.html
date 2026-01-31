@@ -2,111 +2,173 @@
 {% set title = t("files.title") %}
 
 {% block content %}
-  <h1>{{ t("files.title") }}</h1>
-  <p>{{ t("files.welcome") }}, <b>{{ username }}</b>. {{ t("files.private") }}</p>
+<h1>{{ t("files.title") }}</h1>
+<p>{{ t("files.welcome") }}, <b>{{ username }}</b>. {{ t("files.private") }}</p>
 
-  {% if error %}
-    <div class="error">{{ error }}</div>
-  {% endif %}
-  {% if message %}
-    <div class="notice">{{ message }}</div>
-  {% endif %}
+{% if error %}
+  <div class="error">{{ error }}</div>
+{% endif %}
+{% if message %}
+  <div class="notice">{{ message }}</div>
+{% endif %}
 
-  <!-- Breadcrumbs -->
-  <div class="card" style="margin-bottom:16px;">
-    <div class="breadcrumbs">
-      <a href="{{ url_for('main.files') }}">/</a>
-      {% for b in breadcrumbs %}
-        <span class="sep">›</span>
-        <a href="{{ url_for('main.files', path=b.path) }}">{{ b.label }}</a>
-      {% endfor %}
-    </div>
-
-    <div class="muted" style="margin-top:8px;">
-      {{ t("folders.current") }}: <b>/{{ path }}</b>
-    </div>
+<!-- ================= Breadcrumbs ================= -->
+<div class="card" style="margin-bottom:16px;">
+  <div class="breadcrumbs">
+    <a href="{{ url_for('main.files') }}">/</a>
+    {% for b in breadcrumbs %}
+      <span class="sep">›</span>
+      <a href="{{ url_for('main.files', path=b.path) }}">{{ b.label }}</a>
+    {% endfor %}
   </div>
 
-  <!-- Create folder -->
-  <div class="card" style="margin-bottom:16px;">
-    <h2>{{ t("folders.title") }}</h2>
-    <form method="post">
-      <input type="hidden" name="action" value="mkdir">
-      <label>{{ t("folders.new") }}</label>
-      <input name="folder" placeholder="photos" required>
-      <button type="submit">{{ t("folders.create") }}</button>
-    </form>
+  <div class="muted" style="margin-top:8px;">
+    {{ t("folders.current") }}: <b>/{{ path }}</b>
   </div>
+</div>
 
-  <!-- Upload -->
-  <div class="card" id="upload">
-    <h2>{{ t("files.upload_title") }}</h2>
-    <form method="post" enctype="multipart/form-data">
-      <input type="hidden" name="action" value="upload">
-      <input type="file" name="file" required>
-      <button type="submit">{{ t("nav.upload") }}</button>
-    </form>
-  </div>
+<!-- ================= Create folder ================= -->
+<div class="card" style="margin-bottom:16px;">
+  <h2>{{ t("folders.title") }}</h2>
+  <form method="post" action="{{ url_for('main.files', path=path) }}">
+    <input type="hidden" name="action" value="mkdir">
+    <label>{{ t("folders.new") }}</label>
+    <input name="folder" placeholder="docs" required>
+    <button type="submit">{{ t("folders.create") }}</button>
+  </form>
+</div>
 
-  <!-- Listing -->
-  <div class="card" style="margin-top:16px;">
-    <h2>{{ t("files.my_files") }}</h2>
+<!-- ================= Upload ================= -->
+<div class="card" id="upload">
+  <h2>{{ t("files.upload_title") }}</h2>
+  <form method="post" enctype="multipart/form-data" action="{{ url_for('main.files', path=path) }}">
+    <input type="hidden" name="action" value="upload">
+    <input type="file" name="file" required>
+    <button type="submit">{{ t("nav.upload") }}</button>
+  </form>
+</div>
 
-    {% if folders and folders|length > 0 %}
-      <h3 class="section-title">{{ t("folders.title") }}</h3>
-      <ul>
-        {% for d in folders %}
-          <li>
-            📁 <b>{{ d }}</b>
-            — <a href="{{ url_for('main.files', path=(path ~ '/' ~ d) if path else d) }}">{{ t("folders.open") }}</a>
+<!-- ================= Listing ================= -->
+<div class="card" style="margin-top:16px;">
+  <h2>{{ t("files.my_files") }}</h2>
 
-            <details class="rename">
-              <summary>{{ t("folders.rename") }}</summary>
-              <form method="post" class="rename-form">
-                <input type="hidden" name="action" value="rename">
-                <input type="hidden" name="old" value="{{ d }}">
-                <input name="new" placeholder="{{ t('files.rename_to') }}" required>
-                <button type="submit">{{ t("files.rename") }}</button>
-              </form>
-            </details>
-          </li>
+  <!-- ===== Folders ===== -->
+  {% if folders and folders|length > 0 %}
+    <h3 class="section-title">{{ t("folders.title") }}</h3>
+    <ul>
+      {% for d in folders %}
+        {% set folder_path = (path ~ '/' ~ d) if path else d %}
+        <li>
+          📁 <b>{{ d }}</b>
+          — <a href="{{ url_for('main.files', path=folder_path) }}">
+              {{ t("folders.open") }}
+            </a>
 
-        {% endfor %}
-      </ul>
-    {% endif %}
-
-    {% if files and files|length > 0 %}
-      <h3 class="section-title">{{ t("files.title") }}</h3>
-      <ul>
-        {% for f in files %}
-          {% set full = (path ~ '/' ~ f) if path else f %}
-          <li>
-            {{ f }}
-            — <a href="{{ url_for('main.download', filepath=full) }}">{{ t("files.download") }}</a>
-
-            <form class="inline"
-                  method="post"
-                  action="{{ url_for('main.delete_file', filepath=full, path=path) }}"
-                  onsubmit="return confirm({{ t('files.delete_confirm')|tojson }});">
-              <button class="danger" type="submit">{{ t("files.delete") }}</button>
+          <!-- Rename folder -->
+          <details class="rename">
+            <summary>{{ t("folders.rename") }}</summary>
+            <form method="post" class="rename-form" action="{{ url_for('main.files', path=path) }}">
+              <input type="hidden" name="action" value="rename">
+              <input type="hidden" name="old" value="{{ d }}">
+              <input name="new" placeholder="{{ t('files.rename_to') }}" required>
+              <button type="submit">{{ t("files.rename") }}</button>
             </form>
-            <details class="rename">
-              <summary>{{ t("files.rename") }}</summary>
-              <form method="post" class="rename-form">
-                <input type="hidden" name="action" value="rename">
-                <input type="hidden" name="old" value="{{ f }}">
-                <input name="new" placeholder="{{ t('files.rename_to') }}" required>
-                <button type="submit">{{ t("files.rename") }}</button>
-              </form>
-            </details>
+          </details>
 
-          </li>
-        {% endfor %}
-      </ul>
-    {% endif %}
+          <!-- Move folder -->
+          <form class="inline" method="post" action="{{ url_for('main.files', path=path) }}">
+            <input type="hidden" name="action" value="move_folder">
+            <input type="hidden" name="old" value="{{ d }}">
 
-    {% if (not folders or folders|length == 0) and (not files or files|length == 0) %}
-      <p class="muted">{{ t("files.no_files") }}</p>
-    {% endif %}
-  </div>
+            <select name="target" class="move-select">
+              <option value="">{{ t("folders.move_to") }}: /</option>
+              {% for dpath in all_folders %}
+                {# Не показуємо "всередину себе" як варіант #}
+                {% if dpath != folder_path and not dpath.startswith(folder_path ~ '/') %}
+                  <option value="{{ dpath }}">{{ "/" ~ dpath }}</option>
+                {% endif %}
+              {% endfor %}
+            </select>
+
+            <button type="submit">{{ t("folders.move") }}</button>
+          </form>
+
+          <!-- Delete empty folder -->
+          <form class="inline"
+                method="post"
+                action="{{ url_for('main.delete_folder', folder=folder_path, path=path) }}"
+                onsubmit="return confirm({{ t('folders.delete_confirm')|tojson }});">
+            <button class="danger" type="submit">
+              {{ t("folders.delete") }}
+            </button>
+          </form>
+
+          <!-- Delete folder recursively -->
+          <form class="inline"
+                method="post"
+                action="{{ url_for('main.delete_folder_recursive', folder=folder_path, path=path) }}"
+                onsubmit="return confirm({{ t('folders.delete_confirm_recursive')|tojson }});">
+            <button class="danger" type="submit">
+              {{ t("folders.delete") }} *
+            </button>
+          </form>
+        </li>
+      {% endfor %}
+    </ul>
+  {% endif %}
+
+  <!-- ===== Files ===== -->
+  {% if files and files|length > 0 %}
+    <h3 class="section-title">{{ t("files.title") }}</h3>
+    <ul>
+      {% for f in files %}
+        {% set full = (path ~ '/' ~ f) if path else f %}
+        <li>
+          {{ f }}
+          — <a href="{{ url_for('main.download', filepath=full) }}">
+              {{ t("files.download") }}
+            </a>
+
+          <!-- Delete file -->
+          <form class="inline"
+                method="post"
+                action="{{ url_for('main.delete_file', filepath=full, path=path) }}"
+                onsubmit="return confirm({{ t('files.delete_confirm')|tojson }});">
+            <button class="danger" type="submit">{{ t("files.delete") }}</button>
+          </form>
+
+          <!-- Move file -->
+          <form class="inline" method="post" action="{{ url_for('main.files', path=path) }}">
+            <input type="hidden" name="action" value="move">
+            <input type="hidden" name="old" value="{{ f }}">
+
+            <select name="target" class="move-select">
+              <option value="">{{ t("files.move_to") }}: /</option>
+              {% for dpath in all_folders %}
+                <option value="{{ dpath }}">{{ "/" ~ dpath }}</option>
+              {% endfor %}
+            </select>
+
+            <button type="submit">{{ t("files.move") }}</button>
+          </form>
+
+          <!-- Rename file -->
+          <details class="rename">
+            <summary>{{ t("files.rename") }}</summary>
+            <form method="post" class="rename-form" action="{{ url_for('main.files', path=path) }}">
+              <input type="hidden" name="action" value="rename">
+              <input type="hidden" name="old" value="{{ f }}">
+              <input name="new" placeholder="{{ t('files.rename_to') }}" required>
+              <button type="submit">{{ t("files.rename") }}</button>
+            </form>
+          </details>
+        </li>
+      {% endfor %}
+    </ul>
+  {% endif %}
+
+  {% if (not folders or folders|length == 0) and (not files or files|length == 0) %}
+    <p class="muted">{{ t("files.no_files") }}</p>
+  {% endif %}
+</div>
 {% endblock %}
