@@ -272,4 +272,19 @@ main.container {
   font-size: 13px;
   margin-left: 8px;
 }
+.sortbar {
+  margin: 10px 0 16px 0;
+}
+
+.sortbar form {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.sortlabel {
+  color: #6b7280;
+  font-size: 14px;
+}
 

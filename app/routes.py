@@ -120,6 +120,16 @@ def files():
 
     # current folder path
     rel = request.args.get("path", "")
+    sort_by = (request.args.get("sort") or "name").lower()
+    order = (request.args.get("order") or "asc").lower()
+
+    if sort_by not in ("name", "size", "date"):
+        sort_by = "name"
+    if order not in ("asc", "desc"):
+        order = "asc"
+
+    reverse = (order == "desc")
+
     try:
         rel = safe_rel_path(rel)
         current_dir = resolve_user_path(rel)
@@ -290,28 +300,50 @@ def files():
     folders_list = []
     files_list = []
 
-    for item in sorted(current_dir.iterdir(), key=lambda p: (p.is_file(), p.name.lower())):
+    for item in current_dir.iterdir():
         try:
             st = item.stat()
-            mtime = fmt_mtime(st.st_mtime)
+            mtime_ts = float(st.st_mtime)
+            mtime = fmt_mtime(mtime_ts)
         except OSError:
+            mtime_ts = 0.0
             mtime = ""
 
         if item.is_dir():
             folders_list.append({
                 "name": item.name,
                 "mtime": mtime,
+                "mtime_ts": mtime_ts,
             })
         elif item.is_file():
             try:
-                size = human_size(st.st_size)
+                size_bytes = int(st.st_size)
+                size = human_size(size_bytes)
             except Exception:
+                size_bytes = 0
                 size = ""
+
             files_list.append({
                 "name": item.name,
                 "size": size,
+                "size_bytes": size_bytes,
                 "mtime": mtime,
+                "mtime_ts": mtime_ts,
             })
+
+    # folders: name/date (size not meaningful)
+    if sort_by == "date":
+        folders_list.sort(key=lambda x: x.get("mtime_ts", 0.0), reverse=reverse)
+    else:
+        folders_list.sort(key=lambda x: x.get("name", "").lower(), reverse=reverse)
+
+    # files: name/size/date
+    if sort_by == "size":
+        files_list.sort(key=lambda x: x.get("size_bytes", 0), reverse=reverse)
+    elif sort_by == "date":
+        files_list.sort(key=lambda x: x.get("mtime_ts", 0.0), reverse=reverse)
+    else:
+        files_list.sort(key=lambda x: x.get("name", "").lower(), reverse=reverse)
 
     all_folders = all_folders_under(user_base_dir())
 
@@ -325,6 +357,8 @@ def files():
         error=error,
         message=message,
         all_folders=all_folders,
+        sort_by=sort_by,
+        order=order,
     )
 
 @main_bp.get("/download/<path:filepath>")
