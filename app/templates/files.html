@@ -57,9 +57,11 @@
     <h3 class="section-title">{{ t("folders.title") }}</h3>
     <ul>
       {% for d in folders %}
-        {% set folder_path = (path ~ '/' ~ d) if path else d %}
+        {% set folder_name = d.name %}
+        {% set folder_path = (path ~ '/' ~ folder_name) if path else folder_name %}
         <li>
-          📁 <b>{{ d }}</b>
+          📁 <b>{{ folder_name }}</b>
+          <span class="meta">({{ d.mtime }})</span>
           — <a href="{{ url_for('main.files', path=folder_path) }}">
               {{ t("folders.open") }}
             </a>
@@ -69,7 +71,7 @@
             <summary>{{ t("folders.rename") }}</summary>
             <form method="post" class="rename-form" action="{{ url_for('main.files', path=path) }}">
               <input type="hidden" name="action" value="rename">
-              <input type="hidden" name="old" value="{{ d }}">
+              <input type="hidden" name="old" value="{{ folder_name }}">
               <input name="new" placeholder="{{ t('files.rename_to') }}" required>
               <button type="submit">{{ t("files.rename") }}</button>
             </form>
@@ -78,7 +80,7 @@
           <!-- Move folder -->
           <form class="inline" method="post" action="{{ url_for('main.files', path=path) }}">
             <input type="hidden" name="action" value="move_folder">
-            <input type="hidden" name="old" value="{{ d }}">
+            <input type="hidden" name="old" value="{{ folder_name }}">
 
             <select name="target" class="move-select">
               <option value="">{{ t("folders.move_to") }}: /</option>
@@ -122,9 +124,11 @@
     <h3 class="section-title">{{ t("files.title") }}</h3>
     <ul>
       {% for f in files %}
-        {% set full = (path ~ '/' ~ f) if path else f %}
+        {% set fname = f.name %}
+        {% set full = (path ~ '/' ~ fname) if path else fname %}
         <li>
-          {{ f }}
+          {{ fname }}
+          <span class="meta">{{ f.size }}</span>
           — <a href="{{ url_for('main.download', filepath=full) }}">
               {{ t("files.download") }}
             </a>
@@ -140,7 +144,7 @@
           <!-- Move file -->
           <form class="inline" method="post" action="{{ url_for('main.files', path=path) }}">
             <input type="hidden" name="action" value="move">
-            <input type="hidden" name="old" value="{{ f }}">
+            <input type="hidden" name="old" value="{{ fname }}">
 
             <select name="target" class="move-select">
               <option value="">{{ t("files.move_to") }}: /</option>
@@ -157,7 +161,7 @@
             <summary>{{ t("files.rename") }}</summary>
             <form method="post" class="rename-form" action="{{ url_for('main.files', path=path) }}">
               <input type="hidden" name="action" value="rename">
-              <input type="hidden" name="old" value="{{ f }}">
+              <input type="hidden" name="old" value="{{ fname }}">
               <input name="new" placeholder="{{ t('files.rename_to') }}" required>
               <button type="submit">{{ t("files.rename") }}</button>
             </form>

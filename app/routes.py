@@ -9,6 +9,8 @@ from werkzeug.utils import secure_filename
 
 from .i18n import get_lang, t as _t
 
+from datetime import datetime
+
 import shutil
 
 main_bp = Blueprint("main", __name__)
@@ -91,6 +93,20 @@ def all_folders_under(base: Path):
             out.append(rel)
     out.sort(key=lambda s: s.lower())
     return out
+
+def human_size(num_bytes: int) -> str:
+    units = ["B", "KB", "MB", "GB", "TB"]
+    size = float(num_bytes)
+    for u in units:
+        if size < 1024 or u == units[-1]:
+            if u == "B":
+                return f"{int(size)} {u}"
+            return f"{size:.1f} {u}"
+        size /= 1024.0
+
+def fmt_mtime(ts: float) -> str:
+    # локальний час сервера
+    return datetime.fromtimestamp(ts).strftime("%Y-%m-%d %H:%M")
 
 
 @main_bp.get("/")
@@ -270,15 +286,32 @@ def files():
                     f.save(dest)
                     message = _t(lang, "msg.uploaded", filename=filename)
 
-    # LIST folders/files
+    # LIST folders/files (with size/date)
     folders_list = []
     files_list = []
 
     for item in sorted(current_dir.iterdir(), key=lambda p: (p.is_file(), p.name.lower())):
+        try:
+            st = item.stat()
+            mtime = fmt_mtime(st.st_mtime)
+        except OSError:
+            mtime = ""
+
         if item.is_dir():
-            folders_list.append(item.name)
+            folders_list.append({
+                "name": item.name,
+                "mtime": mtime,
+            })
         elif item.is_file():
-            files_list.append(item.name)
+            try:
+                size = human_size(st.st_size)
+            except Exception:
+                size = ""
+            files_list.append({
+                "name": item.name,
+                "size": size,
+                "mtime": mtime,
+            })
 
     all_folders = all_folders_under(user_base_dir())
 
