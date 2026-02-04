@@ -1,5 +1,6 @@
 from functools import wraps
 from pathlib import Path
+import mimetypes
 
 from flask import (
     Blueprint, render_template, session, redirect, url_for,
@@ -130,6 +131,57 @@ def user_limits():
         quota_mb = int(current_app.config.get("FREE_QUOTA_MB", 200))
 
     return max_mb * 1024 * 1024, quota_mb * 1024 * 1024
+
+def get_ext(filename: str) -> str:
+    filename = (filename or "").strip().lower()
+    if "." not in filename:
+        return ""
+    return filename.rsplit(".", 1)[-1]
+
+def looks_like_double_extension(filename: str) -> bool:
+    # типу: file.jpg.exe або invoice.pdf.js
+    parts = (filename or "").lower().split(".")
+    if len(parts) < 3:
+        return False
+    # якщо останній extension нормальний, але передостанній теж "виконуваний/скриптовий" — підозріло
+    dangerous = {"exe","bat","cmd","com","msi","sh","bash","zsh","js","jar","php","phtml","phar","py","pl","rb"}
+    return parts[-1] in dangerous or parts[-2] in dangerous
+
+def is_allowed_upload(filename: str) -> tuple[bool, str]:
+    """
+    Returns (ok, reason_key)
+    reason_key: i18n key for error
+    """
+    filename = (filename or "").strip()
+
+    if not filename:
+        return False, "err.no_file"
+
+    # forbid hidden files like ".env" or ".bashrc"
+    if filename.startswith("."):
+        return False, "err.upload_hidden"
+
+    # prevent weird long names
+    max_len = int(current_app.config.get("UPLOAD_MAX_FILENAME_LEN", 80))
+    if len(filename) > max_len:
+        return False, "err.upload_name_too_long"
+
+    if looks_like_double_extension(filename):
+        return False, "err.upload_double_ext"
+
+    ext = get_ext(filename)
+    if not ext:
+        return False, "err.upload_no_ext"
+
+    blocked = set(current_app.config.get("UPLOAD_BLOCKED_EXTENSIONS", set()))
+    if ext in blocked:
+        return False, "err.upload_ext_blocked"
+
+    allowed = set(current_app.config.get("UPLOAD_ALLOWED_EXTENSIONS", set()))
+    if ext not in allowed:
+        return False, "err.upload_ext_not_allowed"
+
+    return True, ""
 
 
 @main_bp.get("/")
@@ -317,31 +369,74 @@ def files():
                 if not f.filename:
                     error = _t(lang, "err.no_file")
                 else:
-                    filename = safe_filename(f.filename)
+                    raw_name = f.filename
 
-                    # 1) check file size (per-upload)
-                    # werkzeug FileStorage stream supports seek/tell
-                    f.stream.seek(0, 2)  # end
-                    upload_size = f.stream.tell()
-                    f.stream.seek(0)
-
-                    if upload_size <= 0:
-                        error = _t(lang, "err.no_file")
-                    elif upload_size > max_upload_bytes:
-                        error = _t(lang, "err.upload_too_large", mb=int(max_upload_bytes / (1024 * 1024)))
+                    # 0) filename policy (hidden/double ext/allowed ext)
+                    ok_name, reason_key = is_allowed_upload(raw_name)
+                    if not ok_name:
+                        error = _t(lang, reason_key)
                     else:
-                        # 2) check quota (total storage)
-                        base_dir = user_base_dir()
-                        used = dir_size_bytes(base_dir)
-                        if used + upload_size > quota_bytes:
-                            error = _t(lang, "err.quota_exceeded", mb=int(quota_bytes / (1024 * 1024)))
+                        filename = safe_filename(raw_name)
+
+                        # extra safety: ensure extension still allowed after secure_filename()
+                        ext = get_ext(filename)
+                        allowed = set(current_app.config.get("UPLOAD_ALLOWED_EXTENSIONS", set()))
+                        blocked = set(current_app.config.get("UPLOAD_BLOCKED_EXTENSIONS", set()))
+
+                        if not ext:
+                            error = _t(lang, "err.upload_no_ext")
+                        elif ext in blocked:
+                            error = _t(lang, "err.upload_ext_blocked")
+                        elif ext not in allowed:
+                            error = _t(lang, "err.upload_ext_not_allowed")
                         else:
-                            dest = current_dir / filename
-                            if dest.exists():
-                                error = _t(lang, "err.rename_exists")
+                            # 1) check file size (per-upload)
+                            # werkzeug FileStorage stream supports seek/tell
+                            try:
+                                f.stream.seek(0, 2)  # end
+                                upload_size = f.stream.tell()
+                                f.stream.seek(0)
+                            except Exception:
+                                upload_size = 0
+
+                            if upload_size <= 0:
+                                error = _t(lang, "err.no_file")
+                            elif upload_size > max_upload_bytes:
+                                error = _t(
+                                    lang,
+                                    "err.upload_too_large",
+                                    mb=int(max_upload_bytes / (1024 * 1024)),
+                                )
                             else:
-                                f.save(dest)
-                                message = _t(lang, "msg.uploaded", filename=filename)
+                                # 2) check quota (total storage)
+                                base_dir = user_base_dir()
+                                used = dir_size_bytes(base_dir)
+
+                                if used + upload_size > quota_bytes:
+                                    error = _t(
+                                        lang,
+                                        "err.quota_exceeded",
+                                        mb=int(quota_bytes / (1024 * 1024)),
+                                    )
+                                else:
+                                    # 3) best-effort MIME sanity check for images/pdf
+                                    client_mime = (f.mimetype or "").lower()
+
+                                    if ext in {"png", "jpg", "jpeg", "gif", "webp"}:
+                                        if client_mime and not client_mime.startswith("image/"):
+                                            error = _t(lang, "err.upload_mime_mismatch")
+                                    elif ext == "pdf":
+                                        if client_mime and client_mime not in {"application/pdf", "application/x-pdf"}:
+                                            error = _t(lang, "err.upload_mime_mismatch")
+
+                                    if not error:
+                                        # 4) final save (no overwrite)
+                                        dest = current_dir / filename
+                                        if dest.exists():
+                                            error = _t(lang, "err.rename_exists")
+                                        else:
+                                            f.save(dest)
+                                            message = _t(lang, "msg.uploaded", filename=filename)
 
 
     # LIST folders/files (with size/date)

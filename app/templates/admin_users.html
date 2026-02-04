@@ -1,0 +1,61 @@
+{% extends "base.html" %}
+{% set title = "Admin - Users" %}
+
+{% block content %}
+<h1>Admin: Users</h1>
+
+<p class="muted">
+  You are: <b>{{ me_role }}</b>
+</p>
+
+<table class="table">
+  <thead>
+    <tr>
+      <th>ID</th>
+      <th>Username</th>
+      <th>Role</th>
+      <th>Premium</th>
+      <th>Status</th>
+      <th>Created</th>
+      <th>Actions</th>
+    </tr>
+  </thead>
+
+  <tbody>
+    {% for u in users %}
+      <tr>
+        <td>{{ u.id }}</td>
+        <td><b>{{ u.username }}</b></td>
+        <td>{{ u.role }}</td>
+        <td>{{ "yes" if u.is_premium else "no" }}</td>
+        <td>{{ "active" if u.is_active else "blocked" }}</td>
+        <td>{{ u.created_at }}</td>
+        <td style="display:flex; gap:8px; flex-wrap:wrap;">
+          <form method="post" action="{{ url_for('admin.users_toggle_premium', user_id=u.id) }}">
+            <button type="submit">
+              {{ "Premium OFF" if u.is_premium else "Premium ON" }}
+            </button>
+          </form>
+
+          <form method="post" action="{{ url_for('admin.users_toggle_block', user_id=u.id) }}">
+            <button class="danger" type="submit">
+              {{ "Unblock" if not u.is_active else "Block" }}
+            </button>
+          </form>
+
+          {% if me_role == "admin" %}
+            <form method="post" action="{{ url_for('admin.users_set_role', user_id=u.id) }}">
+              <select name="role" class="move-select">
+                <option value="user" {% if u.role == "user" %}selected{% endif %}>user</option>
+                <option value="moderator" {% if u.role == "moderator" %}selected{% endif %}>moderator</option>
+                <option value="admin" {% if u.role == "admin" %}selected{% endif %}>admin</option>
+              </select>
+              <button type="submit">Set role</button>
+            </form>
+          {% endif %}
+        </td>
+      </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% endblock %}

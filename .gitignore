@@ -5,3 +5,12 @@ instance/
 storage/
 .env
 .DS_Store
+# test files
+test_*.txt
+upload_blocked_tests/
+
+# local env
+.venv/
+__pycache__/
+*.pyc
+

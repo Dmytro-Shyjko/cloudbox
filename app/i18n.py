@@ -64,7 +64,14 @@ TRANSLATIONS = {
         "files.apply": "Apply",
         "err.upload_too_large": "File is too large (max {mb} MB).",
         "err.quota_exceeded": "Storage quota exceeded (max {mb} MB).",
-
+        "err.upload_hidden": "Hidden files are not allowed.",
+        "err.upload_name_too_long": "Filename is too long.",
+        "err.upload_double_ext": "Suspicious filename (double extension).",
+        "err.upload_no_ext": "File extension is required.",
+        "err.upload_ext_blocked": "This file type is blocked.",
+        "err.upload_ext_not_allowed": "This file type is not allowed.",
+        "err.upload_mime_mismatch": "File content type does not match the extension.",        
+        "err.too_many_attempts": "Too many login attempts. Try again in {seconds} seconds.",
     },
     "uk": {
         "nav.files": "Файли",
@@ -128,7 +135,14 @@ TRANSLATIONS = {
         "files.apply": "Застосувати",
         "err.upload_too_large": "Файл занадто великий (максимум {mb} МБ).",
         "err.quota_exceeded": "Перевищено ліміт сховища (максимум {mb} МБ).",
-
+        "err.upload_hidden": "Приховані файли заборонені.",
+        "err.upload_name_too_long": "Назва файлу занадто довга.",
+        "err.upload_double_ext": "Підозріла назва файлу (подвійне розширення).",
+        "err.upload_no_ext": "Потрібне розширення файлу.",
+        "err.upload_ext_blocked": "Цей тип файлу заблокований.",
+        "err.upload_ext_not_allowed": "Цей тип файлу не дозволений.",
+        "err.upload_mime_mismatch": "Тип вмісту файлу не відповідає розширенню.",
+        "err.too_many_attempts": "Забагато спроб входу. Спробуйте ще раз через {seconds} секунд.",
     },
     "de": {
         "nav.files": "Dateien",
@@ -192,7 +206,14 @@ TRANSLATIONS = {
         "files.apply": "Anwenden",
         "err.upload_too_large": "Datei ist zu groß (max. {mb} MB).",
         "err.quota_exceeded": "Speicherlimit überschritten (max. {mb} MB).",
-
+        "err.upload_hidden": "Versteckte Dateien sind nicht erlaubt.",
+        "err.upload_name_too_long": "Dateiname ist zu lang.",
+        "err.upload_double_ext": "Verdächtiger Dateiname (doppelte Endung).",
+        "err.upload_no_ext": "Dateiendung ist erforderlich.",
+        "err.upload_ext_blocked": "Dieser Dateityp ist blockiert.",
+        "err.upload_ext_not_allowed": "Dieser Dateityp ist nicht erlaubt.",
+        "err.upload_mime_mismatch": "Der Dateityp passt nicht zur Dateiendung.",
+        "err.too_many_attempts": "Zu viele Anmeldeversuche. Bitte in {seconds} Sekunden erneut versuchen.",
     },
 }
 
