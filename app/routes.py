@@ -108,6 +108,29 @@ def fmt_mtime(ts: float) -> str:
     # локальний час сервера
     return datetime.fromtimestamp(ts).strftime("%Y-%m-%d %H:%M")
 
+def dir_size_bytes(path: Path) -> int:
+    total = 0
+    for p in path.rglob("*"):
+        if p.is_file():
+            try:
+                total += p.stat().st_size
+            except OSError:
+                pass
+    return total
+
+def user_limits():
+    """Return (max_upload_bytes, quota_bytes) for current user."""
+    is_premium = int(session.get("is_premium", 0)) == 1
+
+    if is_premium:
+        max_mb = int(current_app.config.get("PREMIUM_MAX_UPLOAD_MB", 200))
+        quota_mb = int(current_app.config.get("PREMIUM_QUOTA_MB", 10_000))
+    else:
+        max_mb = int(current_app.config.get("FREE_MAX_UPLOAD_MB", 10))
+        quota_mb = int(current_app.config.get("FREE_QUOTA_MB", 200))
+
+    return max_mb * 1024 * 1024, quota_mb * 1024 * 1024
+
 
 @main_bp.get("/")
 def index():
@@ -141,7 +164,8 @@ def files():
                                folders=[],
                                files=[],
                                error=_t(lang, "err.bad_path"),
-                               message=None)
+                               message=None,
+                               )
 
     current_dir.mkdir(parents=True, exist_ok=True)
 
@@ -284,6 +308,8 @@ def files():
 
         # UPLOAD FILE
         elif action == "upload":
+            max_upload_bytes, quota_bytes = user_limits()
+
             if "file" not in request.files:
                 error = _t(lang, "err.no_file")
             else:
@@ -292,9 +318,31 @@ def files():
                     error = _t(lang, "err.no_file")
                 else:
                     filename = safe_filename(f.filename)
-                    dest = current_dir / filename
-                    f.save(dest)
-                    message = _t(lang, "msg.uploaded", filename=filename)
+
+                    # 1) check file size (per-upload)
+                    # werkzeug FileStorage stream supports seek/tell
+                    f.stream.seek(0, 2)  # end
+                    upload_size = f.stream.tell()
+                    f.stream.seek(0)
+
+                    if upload_size <= 0:
+                        error = _t(lang, "err.no_file")
+                    elif upload_size > max_upload_bytes:
+                        error = _t(lang, "err.upload_too_large", mb=int(max_upload_bytes / (1024 * 1024)))
+                    else:
+                        # 2) check quota (total storage)
+                        base_dir = user_base_dir()
+                        used = dir_size_bytes(base_dir)
+                        if used + upload_size > quota_bytes:
+                            error = _t(lang, "err.quota_exceeded", mb=int(quota_bytes / (1024 * 1024)))
+                        else:
+                            dest = current_dir / filename
+                            if dest.exists():
+                                error = _t(lang, "err.rename_exists")
+                            else:
+                                f.save(dest)
+                                message = _t(lang, "msg.uploaded", filename=filename)
+
 
     # LIST folders/files (with size/date)
     folders_list = []
@@ -347,6 +395,16 @@ def files():
 
     all_folders = all_folders_under(user_base_dir())
 
+    # ===== Storage stats (used/quota/max upload) =====
+    max_upload_bytes, quota_bytes = user_limits()
+
+    base_dir = user_base_dir()
+    used_bytes = dir_size_bytes(base_dir)
+
+    used_mb = used_bytes // (1024 * 1024)
+    quota_mb = quota_bytes // (1024 * 1024)
+    max_up_mb = max_upload_bytes // (1024 * 1024)
+
     return render_template(
         "files.html",
         username=session.get("username"),
@@ -359,6 +417,9 @@ def files():
         all_folders=all_folders,
         sort_by=sort_by,
         order=order,
+        used_mb=used_mb,
+        quota_mb=quota_mb,
+        max_up_mb=max_up_mb,
     )
 
 @main_bp.get("/download/<path:filepath>")

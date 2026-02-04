@@ -5,6 +5,13 @@
 <h1>{{ t("files.title") }}</h1>
 <p>{{ t("files.welcome") }}, <b>{{ username }}</b>. {{ t("files.private") }}</p>
 
+<p class="muted">
+  Storage: <b>{{ used_mb|default(0) }} MB</b> / {{ quota_mb|default(0) }} MB
+  • Max upload: {{ max_up_mb|default(0) }} MB
+  {% if session.get("is_premium") %} • ⭐ Premium{% endif %}
+</p>
+
+
 {% if error %}
   <div class="error">{{ error }}</div>
 {% endif %}

@@ -61,7 +61,10 @@ TRANSLATIONS = {
         "err.move_into_itself": "You can't move a folder into itself",
         "err.move_into_child": "You can't move a folder into its subfolder",
         "msg.folder_moved": "Folder moved: {old} → /{target}",
-        "files.apply": "Apply"
+        "files.apply": "Apply",
+        "err.upload_too_large": "File is too large (max {mb} MB).",
+        "err.quota_exceeded": "Storage quota exceeded (max {mb} MB).",
+
     },
     "uk": {
         "nav.files": "Файли",
@@ -122,7 +125,10 @@ TRANSLATIONS = {
         "err.move_into_itself": "Не можна перемістити папку в саму себе",
         "err.move_into_child": "Не можна перемістити папку у власну підпапку",
         "msg.folder_moved": "Папку переміщено: {old} → /{target}",
-        "files.apply": "Застосувати"
+        "files.apply": "Застосувати",
+        "err.upload_too_large": "Файл занадто великий (максимум {mb} МБ).",
+        "err.quota_exceeded": "Перевищено ліміт сховища (максимум {mb} МБ).",
+
     },
     "de": {
         "nav.files": "Dateien",
@@ -183,7 +189,10 @@ TRANSLATIONS = {
         "err.move_into_itself": "Ordner kann nicht in себя verschoben werden",
         "err.move_into_child": "Ordner kann nicht in einen Unterordner verschoben werden",
         "msg.folder_moved": "Ordner verschoben: {old} → /{target}",
-        "files.apply": "Anwenden"
+        "files.apply": "Anwenden",
+        "err.upload_too_large": "Datei ist zu groß (max. {mb} MB).",
+        "err.quota_exceeded": "Speicherlimit überschritten (max. {mb} MB).",
+
     },
 }
 
