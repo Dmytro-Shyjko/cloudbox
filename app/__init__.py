@@ -1,17 +1,20 @@
 from flask import Flask, session
 from pathlib import Path
-from .admin import admin_bp
 
 from .i18n import get_lang, t, SUPPORTED_LANGS
 from .models import init_db
 
-def create_app():
+
+def create_app(test_config=None):
     app = Flask(__name__, instance_relative_config=True)
 
-    # Для session (потім замінимо на env)
+    # --- base config ---
     app.config["SECRET_KEY"] = "change-me-in-production"
     app.config["DATABASE"] = str(Path(app.instance_path) / "cloudbox.sqlite3")
-    
+
+    # BETA
+    app.config["BETA_MAX_USERS"] = 50  # постав будь-яке число
+
     # FREE
     app.config["FREE_MAX_UPLOAD_MB"] = 100
     app.config["FREE_QUOTA_MB"] = 2_000
@@ -24,33 +27,32 @@ def create_app():
     app.config["UPLOAD_ALLOWED_EXTENSIONS"] = {
         "txt", "md", "pdf",
         "png", "jpg", "jpeg", "gif", "webp",
-        "zip"
+        "zip",
     }
 
-    # Optional: forbid some common dangerous extensions explicitly (defense in depth)
     app.config["UPLOAD_BLOCKED_EXTENSIONS"] = {
         "exe", "bat", "cmd", "com", "msi",
         "sh", "bash", "zsh",
         "js", "jar",
         "php", "phtml", "phar",
-        "py", "pl", "rb"
+        "py", "pl", "rb",
     }
 
-    # Optional: limit filename length
     app.config["UPLOAD_MAX_FILENAME_LEN"] = 80
 
-    
-    app.register_blueprint(admin_bp)
-    
 
 
+    # Allow tests to override config
+    if test_config:
+        app.config.update(test_config)
 
+    # Ensure instance folder exists
     Path(app.instance_path).mkdir(parents=True, exist_ok=True)
 
     # init DB
     init_db(app)
 
-    # i18n в шаблони
+    # i18n into templates
     @app.context_processor
     def inject_i18n():
         lang = get_lang(session)
@@ -59,12 +61,32 @@ def create_app():
             "current_lang": lang,
             "supported_langs": SUPPORTED_LANGS,
         }
+    
+    import time
+    from flask import request
+    from .models import touch_user_activity
 
-    # blueprints
+    @app.before_request
+    def _track_activity():
+        uid = session.get("user_id")
+        if not uid:
+            return
+
+        now = int(time.time())
+        last = session.get("_last_touch", 0)
+
+        if now - int(last) >= 60:
+            touch_user_activity(app, int(uid))
+            session["_last_touch"] = now
+
+
+    # --- blueprints (import AFTER app exists) ---
     from .auth import auth_bp
     from .routes import main_bp
+    from .admin import admin_bp
+
     app.register_blueprint(auth_bp)
     app.register_blueprint(main_bp)
+    app.register_blueprint(admin_bp)
 
     return app
-

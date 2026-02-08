@@ -1,0 +1,177 @@
+{% extends "base.html" %}
+
+{% block extra_css %}
+  <link rel="stylesheet" href="{{ url_for('static', filename='admin.css') }}">
+{% endblock %}
+
+{% block content %}
+<div class="admin-wrap">
+
+  <div class="admin-detail-header">
+    <div>
+      <h1 class="admin-title">
+        User: {{ user.username }}
+        <span class="admin-subtitle">#{{ user.id }}</span>
+      </h1>
+      <div class="admin-subtitle">
+        Admin panel • деталі користувача • Ви: <b>{{ me_role }}</b> (id={{ me_id }})
+      </div>
+    </div>
+
+    <div class="admin-detail-header-actions">
+      <a class="btn btn-secondary" href="{{ url_for('admin.users_page') }}">← Back to users</a>
+    </div>
+  </div>
+
+  <div class="admin-detail-grid">
+    <!-- LEFT: Profile / questionnaire -->
+    <div class="card admin-card">
+
+      <div class="admin-topline">
+        <div class="admin-topline-left">
+          <span class="pill">
+            Role: <b>{{ user.role }}</b>
+          </span>
+
+          {% if user.is_premium %}
+            <span class="pill pill-premium">premium</span>
+          {% else %}
+            <span class="pill">free</span>
+          {% endif %}
+
+          {% if user.is_active %}
+            <span class="pill pill-ok">active</span>
+          {% else %}
+            <span class="pill pill-bad">blocked</span>
+          {% endif %}
+        </div>
+      </div>
+
+      <div class="divider"></div>
+
+      <h3 class="section-title">Анкетні дані</h3>
+
+      <div class="kv">
+        <div class="k">Email</div>
+        <div class="v">{{ user.email or "—" }}</div>
+      </div>
+      <div class="kv">
+        <div class="k">First name</div>
+        <div class="v">{{ user.first_name or "—" }}</div>
+      </div>
+      <div class="kv">
+        <div class="k">Last name</div>
+        <div class="v">{{ user.last_name or "—" }}</div>
+      </div>
+      <div class="kv">
+        <div class="k">Country</div>
+        <div class="v">{{ user.country or "—" }}</div>
+      </div>
+      <div class="kv">
+        <div class="k">Phone</div>
+        <div class="v">{{ user.phone or "—" }}</div>
+      </div>
+
+      <div class="divider"></div>
+
+      <h3 class="section-title">Системні поля</h3>
+
+      <div class="kv">
+        <div class="k">Created</div>
+        <div class="v mono">{{ user.created_at or "—" }}</div>
+      </div>
+
+      <div class="kv">
+        <div class="k">Last active</div>
+        <div class="v mono">{{ user.last_active_str or "—" }}</div>
+      </div>
+
+      {# У твоєму admin.py зараз accepted_terms_at/email_verified не передаються.
+         Якщо хочеш — додамо в get_user() і передамо. Поки без цього блоку. #}
+    </div>
+
+    <!-- RIGHT: Actions -->
+    <div class="card admin-card">
+      <h3 class="section-title">Дії</h3>
+
+      <div class="kv">
+        <div class="k">Storage used</div>
+        <div class="v mono">{{ user.used_human or "—" }}</div>
+      </div>
+
+      <div class="admin-actions">
+        <form method="post" action="{{ url_for('admin.users_toggle_premium', user_id=user.id) }}">
+          <button class="btn {% if user.is_premium %}btn-warning{% else %}btn-primary{% endif %}" type="submit">
+            {% if user.is_premium %}Remove Premium{% else %}Make Premium{% endif %}
+          </button>
+        </form>
+
+        <form method="post" action="{{ url_for('admin.users_toggle_block', user_id=user.id) }}">
+          <button
+            class="btn {% if user.is_active %}btn-warning{% else %}btn-primary{% endif %}"
+            type="submit"
+            {% if user.id == me_id %}disabled title="Не можна блокувати самого себе"{% endif %}
+          >
+            {% if user.is_active %}Block{% else %}Unblock{% endif %}
+          </button>
+        </form>
+      </div>
+
+      <div class="divider"></div>
+
+      <h3 class="section-title">Роль (тільки admin)</h3>
+
+      {% if me_is_admin %}
+        <form method="post" action="{{ url_for('admin.users_set_role', user_id=user.id) }}">
+          <div class="admin-role-row">
+            <select name="role" class="select" {% if user.id == me_id %}disabled{% endif %}>
+              <option value="user" {{ "selected" if user.role == "user" else "" }}>user</option>
+              <option value="moderator" {{ "selected" if user.role == "moderator" else "" }}>moderator</option>
+              <option value="admin" {{ "selected" if user.role == "admin" else "" }}>admin</option>
+            </select>
+
+            <button class="btn btn-secondary" type="submit" {% if user.id == me_id %}disabled{% endif %}>
+              Save role
+            </button>
+          </div>
+          <div class="help">
+            Лише admin може змінювати ролі. Самому собі знімати admin заборонено (логіка в admin.py).
+          </div>
+        </form>
+      {% else %}
+        <div class="help">
+          Ви не admin, тому змінювати ролі не можна.
+        </div>
+      {% endif %}
+
+      <div class="divider"></div>
+
+      <h3 class="section-title danger-title">Delete user (admin only)</h3>
+
+      {% if me_is_admin %}
+        <form
+          method="post"
+          action="{{ url_for('admin.users_delete', user_id=user.id) }}"
+          onsubmit="return confirm('Видалити користувача {{ user.username }} (#{{ user.id }})?\n\nЦе видалить і файли користувача. Дію не можна скасувати.');"
+        >
+          <button
+            class="btn btn-danger"
+            type="submit"
+            {% if user.id == me_id %}disabled title="Не можна видалити самого себе"{% endif %}
+          >
+            Delete user
+          </button>
+        </form>
+        <div class="help">
+          Під час бета-тесту: без додаткових умов, але лише admin.
+        </div>
+      {% else %}
+        <div class="help">
+          Видалення доступне лише адміністратору.
+        </div>
+      {% endif %}
+    </div>
+  </div>
+
+</div>
+{% endblock %}

@@ -1,0 +1,392 @@
+.admin-wrap {
+  max-width: 1100px;
+  margin: 0 auto;
+  padding: 16px;
+}
+
+.admin-header {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 12px;
+}
+
+.admin-title {
+  margin: 0;
+  font-size: 28px;
+}
+
+.admin-subtitle {
+  margin-top: 6px;
+  opacity: 0.85;
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.card {
+  border: 1px solid rgba(0,0,0,0.12);
+  border-radius: 12px;
+  background: rgba(255,255,255,0.85);
+  overflow: hidden;
+}
+
+.table-wrap {
+  overflow-x: auto;
+}
+
+.admin-table {
+  width: 100%;
+  border-collapse: collapse;
+  min-width: 900px;
+}
+
+.admin-table thead th {
+  text-align: left;
+  font-weight: 600;
+  font-size: 14px;
+  padding: 12px 12px;
+  border-bottom: 1px solid rgba(0,0,0,0.12);
+  background: rgba(0,0,0,0.03);
+  white-space: nowrap;
+}
+
+.admin-table tbody td {
+  padding: 12px 12px;
+  border-bottom: 1px solid rgba(0,0,0,0.08);
+  vertical-align: top;
+}
+
+.th-actions {
+  text-align: left;
+  width: 320px;
+}
+
+.row-muted {
+  opacity: 0.65;
+}
+
+.user-cell {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.user-link {
+  font-weight: 650;
+  text-decoration: none;
+}
+
+.user-link:hover {
+  text-decoration: underline;
+}
+
+.user-meta {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+  font-size: 13px;
+  opacity: 0.9;
+}
+
+.role-form {
+  display: inline-flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.role-form select {
+  padding: 6px 8px;
+  border-radius: 8px;
+  border: 1px solid rgba(0,0,0,0.2);
+}
+
+.actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.mono {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+  font-size: 13px;
+}
+
+.pill {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 12px;
+  border: 1px solid rgba(0,0,0,0.18);
+  background: rgba(0,0,0,0.02);
+}
+
+.pill-ok {
+  border-color: rgba(0,140,60,0.35);
+  background: rgba(0,140,60,0.08);
+}
+
+.pill-bad {
+  border-color: rgba(180,0,0,0.35);
+  background: rgba(180,0,0,0.08);
+}
+
+.pill-premium {
+  border-color: rgba(120,80,255,0.35);
+  background: rgba(120,80,255,0.10);
+}
+
+.pill-admin {
+  border-color: rgba(0,90,160,0.35);
+  background: rgba(0,90,160,0.10);
+}
+
+.btn {
+  padding: 7px 10px;
+  border-radius: 10px;
+  border: 1px solid rgba(0,0,0,0.18);
+  background: rgba(255,255,255,0.9);
+  cursor: pointer;
+  font-size: 13px;
+  text-decoration: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.btn-primary {
+  border-color: rgba(0,90,160,0.35);
+  background: rgba(0,90,160,0.08);
+}
+
+.btn-secondary {
+  border-color: rgba(0,0,0,0.18);
+  background: rgba(0,0,0,0.03);
+}
+
+.btn-warning {
+  border-color: rgba(200,120,0,0.35);
+  background: rgba(200,120,0,0.08);
+}
+
+/* =========================
+   Admin - User detail page
+   ========================= */
+
+.admin-detail-header {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 12px;
+}
+
+.admin-detail-header-actions {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.admin-detail-grid {
+  display: grid;
+  grid-template-columns: 1.2fr 0.8fr;
+  gap: 14px;
+}
+
+@media (max-width: 900px) {
+  .admin-detail-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.admin-card {
+  padding: 14px;
+}
+
+.section-title {
+  margin: 0 0 10px 0;
+  font-size: 16px;
+}
+
+.danger-title {
+  color: rgba(180,0,0,0.95);
+}
+
+.divider {
+  height: 1px;
+  background: rgba(0,0,0,0.12);
+  margin: 12px 0;
+}
+
+.admin-topline {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.admin-topline-left {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.kv {
+  display: grid;
+  grid-template-columns: 160px 1fr;
+  gap: 10px;
+  padding: 8px 0;
+  border-bottom: 1px solid rgba(0,0,0,0.08);
+}
+
+.kv:last-child {
+  border-bottom: none;
+}
+
+.k {
+  opacity: 0.75;
+  font-size: 13px;
+}
+
+.v {
+  font-size: 14px;
+}
+
+.admin-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 10px;
+}
+
+.admin-role-row {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.select {
+  padding: 7px 10px;
+  border-radius: 10px;
+  border: 1px solid rgba(0,0,0,0.18);
+  background: rgba(255,255,255,0.95);
+  font-size: 13px;
+}
+
+.help {
+  margin-top: 8px;
+  font-size: 13px;
+  opacity: 0.8;
+}
+
+/* =========================
+   Admin buttons fix (contrast)
+   ========================= */
+
+/* Обмежуємо вплив тільки адмінкою */
+.admin-wrap .btn,
+.admin-wrap button.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+
+  padding: 9px 12px;
+  border-radius: 10px;
+
+  border: 1px solid rgba(0,0,0,0.18);
+
+  /* важливо: читабельний дефолт */
+  background: #1e3a8a;   /* темно-синій */
+  color: #ffffff;
+
+  text-decoration: none;
+  font-size: 13px;
+  font-weight: 600;
+
+  cursor: pointer;
+}
+
+.admin-wrap .btn:hover,
+.admin-wrap button.btn:hover {
+  filter: brightness(1.08);
+}
+
+.admin-wrap .btn:disabled,
+.admin-wrap button.btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+/* Варіанти кнопок */
+.admin-wrap .btn-primary {
+  background: #1e3a8a;
+  color: #ffffff;
+}
+
+.admin-wrap .btn-secondary {
+  background: #334155;   /* slate */
+  color: #ffffff;
+}
+
+.admin-wrap .btn-warning {
+  background: #b45309;   /* amber/brown */
+  color: #ffffff;
+  border-color: rgba(0,0,0,0.22);
+}
+
+.admin-wrap .btn-danger {
+  background: #b91c1c;   /* red */
+  color: #ffffff;
+  border-color: rgba(0,0,0,0.22);
+}
+
+/* На випадок, якщо десь є <a class="btn ..."> */
+.admin-wrap a.btn {
+  color: #ffffff;
+}
+
+/* Select у адмінці — щоб теж не був білий+білий */
+.admin-wrap .select {
+  background: #ffffff;
+  color: #111827;
+  border: 1px solid rgba(0,0,0,0.18);
+}
+
+.admin-wrap .pill {
+  background: rgba(15, 23, 42, 0.06);
+  border: 1px solid rgba(0,0,0,0.10);
+  color: #111827;
+}
+.admin-wrap .pill-ok {
+  background: rgba(16, 185, 129, 0.10);
+  color: #065f46;
+  border-color: rgba(16, 185, 129, 0.25);
+}
+.admin-wrap .pill-bad {
+  background: rgba(239, 68, 68, 0.10);
+  color: #7f1d1d;
+  border-color: rgba(239, 68, 68, 0.25);
+}
+.admin-wrap .pill-premium {
+  background: rgba(59, 130, 246, 0.10);
+  color: #1e3a8a;
+  border-color: rgba(59, 130, 246, 0.25);
+}
+
+/* Моноширинний текст (дати/розміри) */
+.admin-wrap .mono {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+}

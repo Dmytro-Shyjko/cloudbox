@@ -12,11 +12,86 @@
   <form method="post"
         action="{{ url_for('auth.login_post') if mode == 'login' else url_for('auth.register_post') }}"
         class="card">
-    <label>{{ t("auth.username") }}</label>
-    <input name="username" autocomplete="username" required>
 
+    <!-- Username -->
+    <label>{{ t("auth.username") }}</label>
+    <input name="username"
+           autocomplete="username"
+           value="{{ (request.form.get('username') or '') }}"
+           required>
+
+    <!-- Password -->
     <label>{{ t("auth.password") }}</label>
-    <input name="password" type="password" autocomplete="current-password" required>
+    <input name="password"
+           type="password"
+           autocomplete="{{ 'current-password' if mode == 'login' else 'new-password' }}"
+           required>
+
+    {% if mode == "register" %}
+      <!-- Honeypot (bots will fill it) -->
+      <div class="hp-wrap">
+        <label>Company</label>
+        <input name="company" autocomplete="off" tabindex="-1">
+      </div>
+
+      <hr style="margin:14px 0;">
+
+      <!-- Email -->
+      <label>{{ t("auth.email") }}</label>
+      <input name="email"
+             type="email"
+             autocomplete="email"
+             value="{{ (request.form.get('email') or '') }}"
+             required>
+
+      <!-- First / Last name -->
+      <div class="grid-2">
+        <div>
+          <label>{{ t("auth.first_name") }}</label>
+          <input name="first_name"
+                 autocomplete="given-name"
+                 value="{{ (request.form.get('first_name') or '') }}"
+                 required>
+        </div>
+
+        <div>
+          <label>{{ t("auth.last_name") }}</label>
+          <input name="last_name"
+                 autocomplete="family-name"
+                 value="{{ (request.form.get('last_name') or '') }}"
+                 required>
+        </div>
+      </div>
+
+      <!-- Country -->
+      <label>{{ t("auth.country") }}</label>
+      <input name="country"
+             autocomplete="country-name"
+             placeholder="Germany"
+             value="{{ (request.form.get('country') or '') }}"
+             required>
+
+      <!-- Phone (optional) -->
+      <label>{{ t("auth.phone_optional") }}</label>
+      <input name="phone"
+             type="tel"
+             autocomplete="tel"
+             placeholder="+49..."
+             value="{{ (request.form.get('phone') or '') }}">
+
+      <!-- Terms -->
+      <div class="terms">
+        <label class="checkbox">
+          <input type="checkbox" name="accept_terms"
+                 {% if request.form.get('accept_terms') %}checked{% endif %}
+                 required>
+          <span>
+            {{ t("auth.accept_terms") }}
+            <a href="{{ url_for('main.terms') }}">{{ t("auth.terms_link") }}</a>
+          </span>
+        </label>
+      </div>
+    {% endif %}
 
     <button type="submit">
       {{ t("auth.login_title") if mode == "login" else t("auth.create_account") }}

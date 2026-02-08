@@ -1,61 +1,113 @@
 {% extends "base.html" %}
-{% set title = "Admin - Users" %}
+
+{% block extra_css %}
+  <link rel="stylesheet" href="{{ url_for('static', filename='admin.css') }}">
+{% endblock %}
 
 {% block content %}
-<h1>Admin: Users</h1>
+<div class="admin-wrap">
 
-<p class="muted">
-  You are: <b>{{ me_role }}</b>
-</p>
+  <div class="admin-header">
+    <div>
+      <h1 class="admin-title">Users</h1>
+      <div class="admin-subtitle">
+        You are: <span class="pill">{{ me_role }}</span>
+        {% if me_is_admin %}
+          <span class="pill pill-admin">admin</span>
+        {% endif %}
+      </div>
+    </div>
+  </div>
 
-<table class="table">
-  <thead>
-    <tr>
-      <th>ID</th>
-      <th>Username</th>
-      <th>Role</th>
-      <th>Premium</th>
-      <th>Status</th>
-      <th>Created</th>
-      <th>Actions</th>
-    </tr>
-  </thead>
+  <div class="card">
+    <div class="table-wrap">
+      <table class="admin-table">
+        <thead>
+          <tr>
+            <th>ID</th>
+            <th>User</th>
+            <th>Status</th>
+            <th>Premium</th>
+            <th>Storage</th>
+            <th>Last active</th>
+            <th>Created</th>
+            <th class="th-actions">Actions</th>
+          </tr>
+        </thead>
 
-  <tbody>
-    {% for u in users %}
-      <tr>
-        <td>{{ u.id }}</td>
-        <td><b>{{ u.username }}</b></td>
-        <td>{{ u.role }}</td>
-        <td>{{ "yes" if u.is_premium else "no" }}</td>
-        <td>{{ "active" if u.is_active else "blocked" }}</td>
-        <td>{{ u.created_at }}</td>
-        <td style="display:flex; gap:8px; flex-wrap:wrap;">
-          <form method="post" action="{{ url_for('admin.users_toggle_premium', user_id=u.id) }}">
-            <button type="submit">
-              {{ "Premium OFF" if u.is_premium else "Premium ON" }}
-            </button>
-          </form>
+        <tbody>
+        {% for u in users %}
+          <tr class="{% if not u.is_active %}row-muted{% endif %}">
+            <td class="mono">{{ u.id }}</td>
 
-          <form method="post" action="{{ url_for('admin.users_toggle_block', user_id=u.id) }}">
-            <button class="danger" type="submit">
-              {{ "Unblock" if not u.is_active else "Block" }}
-            </button>
-          </form>
+            <td>
+              <div class="user-cell">
+                <a class="user-link" href="{{ url_for('admin.user_detail', user_id=u.id) }}">
+                  {{ u.username }}
+                </a>
 
-          {% if me_role == "admin" %}
-            <form method="post" action="{{ url_for('admin.users_set_role', user_id=u.id) }}">
-              <select name="role" class="move-select">
-                <option value="user" {% if u.role == "user" %}selected{% endif %}>user</option>
-                <option value="moderator" {% if u.role == "moderator" %}selected{% endif %}>moderator</option>
-                <option value="admin" {% if u.role == "admin" %}selected{% endif %}>admin</option>
-              </select>
-              <button type="submit">Set role</button>
-            </form>
-          {% endif %}
-        </td>
-      </tr>
-    {% endfor %}
-  </tbody>
-</table>
+                <div class="user-meta">
+                  Role:
+                  {% if me_is_admin %}
+                    <form class="role-form" method="post" action="{{ url_for('admin.users_set_role', user_id=u.id) }}">
+                      <select name="role" {% if u.id == me_id %}disabled{% endif %}>
+                        <option value="user" {{ "selected" if u.role == "user" else "" }}>user</option>
+                        <option value="moderator" {{ "selected" if u.role == "moderator" else "" }}>moderator</option>
+                        <option value="admin" {{ "selected" if u.role == "admin" else "" }}>admin</option>
+                      </select>
+                      <button class="btn btn-secondary" type="submit" {% if u.id == me_id %}disabled{% endif %}>
+                        Save
+                      </button>
+                    </form>
+                  {% else %}
+                    <span class="pill">{{ u.role }}</span>
+                  {% endif %}
+                </div>
+              </div>
+            </td>
+
+            <td>
+              {% if u.is_active %}
+                <span class="pill pill-ok">active</span>
+              {% else %}
+                <span class="pill pill-bad">blocked</span>
+              {% endif %}
+            </td>
+
+            <td>
+              {% if u.is_premium %}
+                <span class="pill pill-premium">premium</span>
+              {% else %}
+                <span class="pill">free</span>
+              {% endif %}
+            </td>
+
+            <td class="mono">{{ u.used_human }}</td>
+            <td class="mono">{{ u.last_active_str }}</td>
+            <td class="mono">{{ u.created_at }}</td>
+
+            <td class="actions">
+              <a class="btn btn-primary" href="{{ url_for('admin.user_detail', user_id=u.id) }}">Open</a>
+
+              <form method="post" action="{{ url_for('admin.users_toggle_premium', user_id=u.id) }}">
+                <button class="btn btn-secondary" type="submit">
+                  {% if u.is_premium %}Remove premium{% else %}Give premium{% endif %}
+                </button>
+              </form>
+
+              <form method="post" action="{{ url_for('admin.users_toggle_block', user_id=u.id) }}">
+                <button class="btn btn-warning" type="submit" {% if u.id == me_id %}disabled{% endif %}>
+                  {% if u.is_active %}Block{% else %}Unblock{% endif %}
+                </button>
+              </form>
+            </td>
+          </tr>
+        {% endfor %}
+        </tbody>
+
+      </table>
+    </div>
+  </div>
+
+</div>
 {% endblock %}

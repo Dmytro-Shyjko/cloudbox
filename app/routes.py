@@ -14,6 +14,8 @@ from datetime import datetime
 
 import shutil
 
+from .models import touch_last_active
+
 main_bp = Blueprint("main", __name__)
 
 def login_required(view):
@@ -21,6 +23,7 @@ def login_required(view):
     def wrapped(*args, **kwargs):
         if not session.get("user_id"):
             return redirect(url_for("auth.login_get"))
+        touch_last_active(current_app, session["user_id"])
         return view(*args, **kwargs)
     return wrapped
 
@@ -48,12 +51,15 @@ def safe_rel_path(rel: str) -> str:
     return "/".join(parts)
 
 def resolve_user_path(rel: str) -> Path:
-    """Return absolute path inside user's base dir, prevent traversal."""
     base = user_base_dir().resolve()
     rel_clean = safe_rel_path(rel)
     target = (base / rel_clean).resolve()
-    if not str(target).startswith(str(base)):
+
+    try:
+        target.relative_to(base)
+    except ValueError:
         raise ValueError("bad path")
+
     return target
 
 def safe_filename(name: str) -> str:
@@ -183,6 +189,9 @@ def is_allowed_upload(filename: str) -> tuple[bool, str]:
 
     return True, ""
 
+@main_bp.get("/terms")
+def terms():
+    return render_template("terms.html")
 
 @main_bp.get("/")
 def index():
@@ -532,7 +541,7 @@ def download(filepath):
 
     directory = abs_path.parent
     filename = abs_path.name
-    return send_from_directory(directory, filename, as_attachment=True)
+    return send_from_directory(str(directory), filename, as_attachment=True)
 
 @main_bp.post("/delete/<path:filepath>")
 @login_required

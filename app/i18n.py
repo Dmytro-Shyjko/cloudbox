@@ -72,6 +72,39 @@ TRANSLATIONS = {
         "err.upload_ext_not_allowed": "This file type is not allowed.",
         "err.upload_mime_mismatch": "File content type does not match the extension.",        
         "err.too_many_attempts": "Too many login attempts. Try again in {seconds} seconds.",
+        # ===== Auth / Registration =====
+        "auth.email": "Email address",
+        "auth.first_name": "First name",
+        "auth.last_name": "Last name",
+        "auth.country": "Country",
+        "auth.phone_optional": "Phone number (optional)",
+        "auth.accept_terms": "I agree to the",
+        "auth.terms_link": "Terms and Conditions",
+
+        # ===== Auth buttons / texts =====
+        "auth.create_account": "Create account",
+
+        # ===== Errors =====
+        "err.email_invalid": "Please enter a valid email address.",
+        "err.profile_required": "Please fill in all required profile fields.",
+        "err.terms_required": "You must accept the Terms and Conditions to register.",
+        "terms.title": "Terms and Conditions",
+        "terms.beta_notice": "This service is currently in beta. Features and data may change or be reset at any time.",
+        "terms.section_general": "General",
+        "terms.general_text": "CloudBox is a beta file storage service provided for testing and evaluation purposes only.",
+        "terms.section_account": "User Account",
+        "terms.account_text": "You are responsible for maintaining the confidentiality of your account and uploaded data.",
+        "terms.section_data": "Data and Privacy",
+        "terms.data_text": "Uploaded files are stored privately and are not shared with third parties. However, data loss may occur during beta.",
+        "terms.section_liability": "Limitation of Liability",
+        "terms.liability_text": "The service is provided \"as is\" without any warranties. The provider is not liable for data loss or damages.",
+        "terms.section_changes": "Changes to Terms",
+        "terms.changes_text": "These terms may be updated at any time. Continued use of the service constitutes acceptance of the updated terms.",
+        "terms.acceptance": "By creating an account, you confirm that you have read and accepted these Terms and Conditions.",
+        "terms.back_to_register": "Back to registration",
+        "err.too_many_registrations": "Too many registration attempts. Try again in {seconds} seconds.",
+        "err.bad_request": "Invalid request.",
+
     },
     "uk": {
         "nav.files": "Файли",
@@ -143,6 +176,39 @@ TRANSLATIONS = {
         "err.upload_ext_not_allowed": "Цей тип файлу не дозволений.",
         "err.upload_mime_mismatch": "Тип вмісту файлу не відповідає розширенню.",
         "err.too_many_attempts": "Забагато спроб входу. Спробуйте ще раз через {seconds} секунд.",
+        # ===== Auth / Registration =====
+        "auth.email": "Електронна пошта",
+        "auth.first_name": "Імʼя",
+        "auth.last_name": "Прізвище",
+        "auth.country": "Країна",
+        "auth.phone_optional": "Номер телефону (необовʼязково)",
+        "auth.accept_terms": "Я погоджуюсь з",
+        "auth.terms_link": "Ліцензійною угодою",
+
+        # ===== Auth buttons / texts =====
+        "auth.create_account": "Створити акаунт",
+
+        # ===== Errors =====
+        "err.email_invalid": "Введіть коректну адресу електронної пошти.",
+        "err.profile_required": "Будь ласка, заповніть усі обовʼязкові поля профілю.",
+        "err.terms_required": "Для реєстрації необхідно погодитися з ліцензійною угодою.",
+        "terms.title": "Ліцензійна угода",
+        "terms.beta_notice": "Цей сервіс знаходиться у бета-версії. Функціонал і дані можуть змінюватися або бути скинуті у будь-який момент.",
+        "terms.section_general": "Загальні положення",
+        "terms.general_text": "CloudBox — це бета-сервіс для зберігання файлів, призначений виключно для тестування та ознайомлення.",
+        "terms.section_account": "Обліковий запис",
+        "terms.account_text": "Користувач несе відповідальність за збереження доступу до свого облікового запису та завантажених файлів.",
+        "terms.section_data": "Дані та конфіденційність",
+        "terms.data_text": "Завантажені файли зберігаються приватно та не передаються третім особам. Проте у бета-версії можливі втрати даних.",
+        "terms.section_liability": "Обмеження відповідальності",
+        "terms.liability_text": "Сервіс надається \"як є\" без будь-яких гарантій. Адміністрація не несе відповідальності за втрату даних.",
+        "terms.section_changes": "Зміни умов",
+        "terms.changes_text": "Умови можуть бути змінені у будь-який час. Подальше використання сервісу означає згоду з оновленими умовами.",
+        "terms.acceptance": "Створюючи обліковий запис, ви підтверджуєте, що ознайомилися та погоджуєтеся з цією ліцензійною угодою.",
+        "terms.back_to_register": "Повернутися до реєстрації",
+        "err.too_many_registrations": "Забагато спроб реєстрації. Спробуйте ще раз через {seconds} секунд.",
+        "err.bad_request": "Некоректний запит.",
+
     },
     "de": {
         "nav.files": "Dateien",
@@ -214,6 +280,39 @@ TRANSLATIONS = {
         "err.upload_ext_not_allowed": "Dieser Dateityp ist nicht erlaubt.",
         "err.upload_mime_mismatch": "Der Dateityp passt nicht zur Dateiendung.",
         "err.too_many_attempts": "Zu viele Anmeldeversuche. Bitte in {seconds} Sekunden erneut versuchen.",
+        # ===== Auth / Registration =====
+        "auth.email": "E-Mail-Adresse",
+        "auth.first_name": "Vorname",
+        "auth.last_name": "Nachname",
+        "auth.country": "Land",
+        "auth.phone_optional": "Telefonnummer (optional)",
+        "auth.accept_terms": "Ich stimme den",
+        "auth.terms_link": "Nutzungsbedingungen zu",
+
+        # ===== Auth buttons / texts =====
+        "auth.create_account": "Konto erstellen",
+
+        # ===== Errors =====
+        "err.email_invalid": "Bitte geben Sie eine gültige E-Mail-Adresse ein.",
+        "err.profile_required": "Bitte füllen Sie alle erforderlichen Profilfelder aus.",
+        "err.terms_required": "Sie müssen den Nutzungsbedingungen zustimmen, um sich zu registrieren.",
+        "terms.title": "Nutzungsbedingungen",
+        "terms.beta_notice": "Dieser Dienst befindet sich in der Beta-Phase. Funktionen und Daten können jederzeit geändert oder zurückgesetzt werden.",
+        "terms.section_general": "Allgemeines",
+        "terms.general_text": "CloudBox ist ein Beta-Dateispeicherdienst, der ausschließlich zu Test- und Evaluierungszwecken bereitgestellt wird.",
+        "terms.section_account": "Benutzerkonto",
+        "terms.account_text": "Sie sind für die Sicherheit Ihres Kontos und Ihrer hochgeladenen Daten selbst verantwortlich.",
+        "terms.section_data": "Daten und Datenschutz",
+        "terms.data_text": "Hochgeladene Dateien werden privat gespeichert und nicht an Dritte weitergegeben. In der Beta-Phase kann es zu Datenverlust kommen.",
+        "terms.section_liability": "Haftungsbeschränkung",
+        "terms.liability_text": "Der Dienst wird \"wie besehen\" bereitgestellt, ohne jegliche Garantien. Es wird keine Haftung für Datenverluste übernommen.",
+        "terms.section_changes": "Änderungen der Bedingungen",
+        "terms.changes_text": "Diese Bedingungen können jederzeit geändert werden. Die weitere Nutzung gilt als Zustimmung zu den Änderungen.",
+        "terms.acceptance": "Mit der Erstellung eines Kontos bestätigen Sie, dass Sie diese Nutzungsbedingungen gelesen und akzeptiert haben.",
+        "terms.back_to_register": "Zurück zur Registrierung",
+        "err.too_many_registrations": "Zu viele Registrierungsversuche. Bitte in {seconds} Sekunden erneut versuchen.",
+        "err.bad_request": "Ungültige Anfrage.",
+
     },
 }
 
