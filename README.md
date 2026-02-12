@@ -1,301 +1,170 @@
-## Done
-- Auth (login/register/logout)
-- File upload/download/delete
-- Folders & nested directories
-- Rename files and folders
-- i18n (EN / UK / DE)
+# ☁️ CloudBox
 
-## Next
-- Delete folders (empty / recursive)
-- Move files between folders
-- File info (size, date)
-- UI improvements
+CloudBox is a Flask-based file storage system designed for secure file upload, storage, and controlled access.
 
+The project is built as a modular, test-driven web application with a structured Git workflow and AI-assisted development.
 
-Нижче — детальний, “практичний” функціонал адміна для CloudBox, з чітким поділом: що має робити admin, що можна віддати moderator, і що бачить звичайний користувач. Я орієнтуюсь на твій MVP (файли/папки) + твою вимогу: преміум видає адмін/модератор.
+---
 
-0) Основна ідея
+## 🚀 Features
 
-Admin = керує системою і правами.
-Moderator = керує користувачами в межах правил (преміум/блокування/скарги).
-User/Premium = користується функціями сховища.
+- User authentication system
+- Secure file upload handling
+- Structured file storage management
+- Automated testing with pytest
+- Clean Git workflow (main / develop / feature/*)
+- AI-assisted development (Codex-ready)
 
-1) Адмін-панель: розділи та можливості
-1.1 Dashboard (головна сторінка адміна)
+---
 
-Адмін бачить коротку картину системи:
+## 🛠 Tech Stack
 
-Кількість користувачів: всього / активні за 7 днів
+- Python 3
+- Flask
+- Pytest
+- Virtual Environment (.venv)
+- Git + GitHub
+- Black (code formatting)
 
-Скільки premium (і скільки закінчиться скоро, якщо буде premium_until)
+---
 
-Використання диску:
+## 📂 Project Structure
 
-total (всі користувачі)
+cloudbox/
+│
+├── app/ # Core application logic
+├── tests/ # Automated tests
+├── storage/ # File storage handling
+├── instance/ # Runtime configuration
+├── run.py # Application entry point
+├── requirements.txt # Dependencies
+├── AGENTS.md # AI development rules
+├── CONTRIBUTING.md # Contribution workflow
+└── README.md # Project documentation
 
-топ-10 користувачів за місцем
 
-Статистика файлів:
+---
 
-кількість файлів/папок
+## ⚙️ Local Setup
 
-середній розмір upload
+### 1️⃣ Clone repository
 
-найпопулярніші типи файлів (png/jpg/pdf/zip тощо)
+git clone https://github.com/Dmytro-Shyjko/cloudbox.git
 
-Системні помилки/попередження:
+cd cloudbox
 
-останні 20 помилок (якщо буде логування)
+### 2️⃣ Create virtual environment
 
-failed login спроби (якщо додаси)
+python3 -m venv .venv
+source .venv/bin/activate
 
-Для MVP можна зробити “легку” версію: users count + total storage + top users.
 
-1.2 Користувачі (Users Management) — головний модуль
+### 3️⃣ Install dependencies
 
-Таблиця користувачів з пошуком/фільтрами:
+pip install -r requirements.txt
 
-Колонки:
 
-id
+### 4️⃣ Run application
 
-username
+python run.py
 
-email (якщо є)
 
-role (user/mod/admin)
+The application will start locally.
 
-premium (on/off або до дати)
+---
 
-status (active / blocked)
+## 🧪 Running Tests
 
-created_at, last_login_at
+Before any Pull Request:
 
-storage_used (MB/GB)
+pytest
 
-files_count (опційно)
 
-Фільтри:
+All tests must pass.
 
-роль
+---
 
-premium yes/no
+## 🎨 Code Formatting
 
-blocked yes/no
+Before committing:
 
-usage > X GB
+black
 
-created last 30 days
 
-Дії для admin:
+Follow PEP8 conventions.
 
-Змінити роль користувача:
+---
 
-user → moderator
+## 🌿 Branching Strategy
 
-moderator → user
+- `main` → production-ready code
+- `develop` → integration branch
+- `feature/*` → new functionality
 
-(admin → user тільки іншому адміну; себе “розадмінити” не давати)
+Never commit directly to `main`.
 
-Видати/забрати Premium:
+---
 
-toggle is_premium
+## 🔄 Development Workflow
 
-або встановити premium_until
+1. Checkout develop:
+git checkout develop
+git pull
+2. Create feature branch:
+git checkout -b feature/<name>
+3. Commit changes:
+git add -A
+git commit -m "feat: description"
+4. Push branch:
+git push -u origin feature/<name>
 
-Блокування/розблокування:
+5. Create Pull Request:
+feature → develop
 
-is_active = 0/1
+After testing:
+develop → main
 
-при блокуванні: заборонити логін
+---
 
-Скинути пароль (для MVP можна зробити “force reset token”)
+## 🔐 Security Notes
 
-Переглянути профіль користувача (User details)
+- Never commit secrets
+- Use environment variables for sensitive data
+- Validate all user inputs
+- Ensure safe file handling
 
-Імперсонація (опційно): “увійти як користувач” для дебагу
+---
 
-Видалити користувача (обережно) + що робити з файлами:
+## 📈 Roadmap (Planned Improvements)
 
-delete storage
+- Password reset functionality
+- Role-based access control
+- File versioning
+- Storage quota system
+- Admin dashboard improvements
+- Production deployment automation
 
-або “архівувати”
+---
 
-Керування квотою:
+## 🤖 AI Integration
 
-set quota_mb індивідуально
+CloudBox uses structured AI-assisted development.
 
-або “по плану” (free/premium)
+The `AGENTS.md` file defines rules for code agents to:
+- maintain stability
+- follow project conventions
+- run tests before PR
+- avoid modifying critical logic without explanation
 
-Делегувати модератору можна:
+---
 
-premium on/off
+## 📄 License
 
-блокування/розблокування
+Currently under private development.
 
-перегляд списку користувачів
-А от роль — краще лише адміну.
+---
 
-1.3 Premium Management (права преміуму)
+## 👨‍💻 Author
 
-Адмін визначає, що саме дає premium:
-
-Приклад набору преміум-функцій:
-
-більша quota (наприклад Free 2GB, Premium 50GB)
-
-більший max upload size
-
-доступ до share links
-
-доступ до trash/restore
-
-доступ до advanced preview
-
-доступ до zip download (папку в zip)
-
-Адмін-панель може мати сторінку:
-
-“Premium features toggles” (вкл/викл фічі глобально)
-
-“Plans” (пізніше)
-
-Для MVP достатньо: quota + max upload + share links (пізніше).
-
-1.4 Storage Administration (сховище)
-
-Адмін керує “фізикою” файлів:
-
-Перегляд storage використання по користувачах
-
-Очистка сміття/кеша (якщо буде .trash)
-
-Перерахунок usage (на випадок збоїв)
-
-Пошук файлу по назві (наприклад “invoice.pdf” у кого є)
-
-Перевірка підозрілих файлів (за розширенням: .exe, .js, .bat)
-
-Масове обмеження:
-
-заборонити upload деяких типів файлів
-
-встановити max upload size глобально
-
-Важливо: адмін не повинен за замовчуванням бачити вміст файлів користувача без потреби (це питання приватності). Для MVP можна не робити “перегляд файлів інших”.
-
-1.5 Security & Access (безпека)
-
-Адмін керує:
-
-політикою паролів (мін. довжина, складність)
-
-лімітом спроб логіну (rate limit)
-
-сесіями:
-
-“logout user everywhere”
-
-примусове завершення сесій
-
-audit log:
-
-хто кому видав premium
-
-хто змінив роль
-
-хто заблокував користувача
-
-хто видалив папку (опційно)
-
-Для MVP рекомендую мінімум:
-
-audit log для premium/role/block.
-
-1.6 System Settings (налаштування системи)
-
-APP_NAME, мови за замовчуванням
-
-default quota для free/premium
-
-max upload size free/premium
-
-дозволені типи файлів
-
-режим maintenance (сайт тільки для адміна)
-
-backup settings (якщо додаси)
-
-1.7 Logs / Monitoring (журнал)
-
-помилки сервера (500)
-
-дії користувачів (upload/delete/move)
-
-підозрілі дії (спроби .., багато запитів)
-
-Можна мінімум:
-
-app.log + сторінка “Last 200 lines”.
-
-2) Розподіл між admin і moderator (рекомендовано)
-Moderator може:
-
-вмикати/вимикати premium
-
-блокувати/розблокувати користувачів
-
-переглядати список користувачів
-
-бачити audit log (обмежено)
-
-Admin може все вище +:
-
-змінювати ролі
-
-змінювати глобальні налаштування
-
-видаляти користувачів
-
-керувати квотами/правилами безпеки
-
-керувати резервними копіями
-
-3) Мінімальний MVP для адміна (щоб не роздувати)
-
-Якщо робити “правильно й швидко”, то MVP адміна = 3 сторінки:
-
-/admin/users
-таблиця + пошук + кнопки:
-
-Toggle premium
-
-Block/unblock
-
-(Admin only) change role
-
-/admin/audit
-лог: хто кому що змінив (premium/role/block)
-
-/admin/settings
-quota free/premium + max upload size free/premium
-
-4) Які “преміум можливості” варто дати першими
-
-Щоб преміум мав сенс вже зараз:
-
-Quota: Free 200MB, Premium 10GB (або як хочеш)
-
-Max upload size: Free 10MB, Premium 200MB
-
-Share link (тільки premium) — дуже “хмарна” фіча
-
-5) Важливі правила безпеки для адмін-функцій
-
-модератор не може робити admin
-
-admin не може “сам себе” понизити (щоб не втратити доступ)
-
-всі адмін-дії → в audit log
-
-блокування користувача → скинути його сесію (logout everywhere) — пізніше
+Dmytro Shyjko  
+CloudBox Project  
