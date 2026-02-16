@@ -1,3 +1,5 @@
+Test line: codex connection check.
+
 ## Done
 - Auth (login/register/logout)
 - File upload/download/delete
