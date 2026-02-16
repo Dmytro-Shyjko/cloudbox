@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="{{ session.get('lang', 'en') }}">
+<html lang="{{ current_lang }}">
 <head>
 	<meta charset="utf-8">
 	<title>{{ title if title else "CloudBox" }}</title>
@@ -31,9 +31,9 @@
 
 			<form class="lang-form" method="post" action="{{ url_for('auth.set_lang_post') }}">
 				<select class="lang-select" name="lang" onchange="this.form.submit()">
-					<option value="en" {% if session.get('lang', 'en') == 'en' %}selected{% endif %}>EN</option>
-					<option value="uk" {% if session.get('lang', 'en') == 'uk' %}selected{% endif %}>UA</option>
-					<option value="de" {% if session.get('lang', 'en') == 'de' %}selected{% endif %}>DE</option>
+					<option value="en" {% if current_lang == 'en' %}selected{% endif %}>EN</option>
+					<option value="uk" {% if current_lang == 'uk' %}selected{% endif %}>UA</option>
+					<option value="de" {% if current_lang == 'de' %}selected{% endif %}>DE</option>
 				</select>
 			</form>
 		</nav>

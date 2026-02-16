@@ -87,10 +87,15 @@ a {
 .lang-select {
   padding: 6px 10px;
   border-radius: 10px;
-  border: 1px solid rgba(255, 255, 255, 0.25);
-  background: rgba(255, 255, 255, 0.08);
-  color: white;
+  border: 1px solid #d1d5db;
+  background: #ffffff;
+  color: #111827;
   font-size: 14px;
+}
+
+.lang-select option {
+  background: #ffffff;
+  color: #111827;
 }
 
 .user {
