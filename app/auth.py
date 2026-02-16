@@ -189,6 +189,14 @@ def logout():
     return redirect(url_for("auth.login_get"))
 
 
+@auth_bp.post("/lang")
+def set_lang_post():
+    lang = request.form.get("lang", "")
+    if lang in SUPPORTED_LANGS:
+        session["lang"] = lang
+    return redirect(request.referrer or url_for("main.index"))
+
+
 @auth_bp.get("/lang/<lang>")
 def set_lang(lang):
     if lang in SUPPORTED_LANGS:

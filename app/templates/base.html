@@ -1,77 +1,56 @@
 <!DOCTYPE html>
-<html lang="{{ session.get('lang', 'en') }}">
+<html lang="{{ current_lang }}">
 <head>
-  <meta charset="utf-8">
-  <title>{{ title if title else "CloudBox" }}</title>
+	<meta charset="utf-8">
+	<title>{{ title if title else "CloudBox" }}</title>
 
-  <meta name="viewport" content="width=device-width, initial-scale=1">
+	<meta name="viewport" content="width=device-width, initial-scale=1">
 
-  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
-  {% block extra_css %}{% endblock %}
+	<link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+	{% block extra_css %}{% endblock %}
 </head>
 <body>
 
-<!-- ================= Header / Navigation ================= -->
 <header class="header">
-  <div class="container header-inner">
+	<div class="container header-row">
+		<div class="nav-left">
+			<a class="brand" href="{{ url_for('main.index') }}">CloudBox</a>
+		</div>
 
-    <!-- Logo -->
-    <div class="logo">
-      <a href="{{ url_for('main.files') }}">☁ CloudBox</a>
-    </div>
+		<nav class="nav nav-right">
+			{% if session.get("user_id") %}
+				<a class="nav-link" href="{{ url_for('main.files') }}">{{ t("nav.files") }}</a>
+				{% if session.get("role") == "admin" %}
+					<a class="nav-link" href="{{ url_for('admin.users_page') }}">Admin</a>
+				{% endif %}
+				<a class="nav-link" href="{{ url_for('auth.logout') }}">{{ t("nav.logout") }}</a>
+			{% else %}
+				<a class="nav-link" href="{{ url_for('auth.login_get') }}">{{ t("nav.login") }}</a>
+				<a class="nav-link" href="{{ url_for('auth.register_get') }}">{{ t("nav.register") }}</a>
+			{% endif %}
 
-    <!-- Navigation -->
-    <nav class="nav">
-      {% if session.get("user_id") %}
-        <a href="{{ url_for('main.files') }}">{{ t("nav.files") }}</a>
-
-        {% if session.get("role") in ["admin", "moderator"] %}
-          <a href="{{ url_for('admin.users_page') }}">Admin</a>
-        {% endif %}
-
-        <a href="{{ url_for('auth.logout') }}">{{ t("nav.logout") }}</a>
-      {% else %}
-        <a href="{{ url_for('auth.login_get') }}">{{ t("nav.login") }}</a>
-        <a href="{{ url_for('auth.register_get') }}">{{ t("nav.register") }}</a>
-      {% endif %}
-    </nav>
-
-    <!-- Right side: role + language -->
-    <div class="header-right">
-
-      {% if session.get("user_id") %}
-        <span class="badge role role-{{ session.get('role') }}">
-          {{ session.get("role") }}
-          {% if session.get("is_premium") %}
-            ⭐
-          {% endif %}
-        </span>
-      {% endif %}
-
-      <!-- Language selector -->
-      <div class="lang-switch">
-        <a href="{{ url_for('auth.set_lang', lang='en') }}">EN</a>
-        <a href="{{ url_for('auth.set_lang', lang='uk') }}">UA</a>
-        <a href="{{ url_for('auth.set_lang', lang='de') }}">DE</a>
-      </div>
-    </div>
-
-  </div>
+			<form class="lang-form" method="post" action="{{ url_for('auth.set_lang_post') }}">
+				<select class="lang-select" name="lang" onchange="this.form.submit()">
+					<option value="en" {% if current_lang == 'en' %}selected{% endif %}>EN</option>
+					<option value="uk" {% if current_lang == 'uk' %}selected{% endif %}>UA</option>
+					<option value="de" {% if current_lang == 'de' %}selected{% endif %}>DE</option>
+				</select>
+			</form>
+		</nav>
+	</div>
 </header>
 
-<!-- ================= Main Content ================= -->
 <main class="container main-content">
-  {% block content %}{% endblock %}
+	{% block content %}{% endblock %}
 </main>
 
-<!-- ================= Footer ================= -->
 <footer class="footer">
-  <div class="container">
-    <span class="muted">
-      CloudBox © {{ 2026 }} |
-      {{ session.get("username") if session.get("user_id") else "guest" }}
-    </span>
-  </div>
+	<div class="container">
+		<span class="muted">
+			CloudBox © {{ 2026 }} |
+			{{ session.get("username") if session.get("user_id") else "guest" }}
+		</span>
+	</div>
 </footer>
 
 </body>
