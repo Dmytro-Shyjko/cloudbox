@@ -145,29 +145,6 @@ a {
 	outline-offset: 1px;
 }
 
-.lang-go {
-	margin-top: 0;
-	padding: 6px 10px;
-	font-size: 13px;
-	border-radius: 10px;
-	border: 1px solid rgba(255, 255, 255, 0.25);
-	background: rgba(255, 255, 255, 0.08);
-	color: #fff;
-}
-
-.lang-go,
-.lang-go-en,
-.lang-go-uk,
-.lang-go-de {
-	display: none;
-}
-
-.lang-select:has(option[value="en"]:checked) .lang-go-en,
-.lang-select:has(option[value="uk"]:checked) .lang-go-uk,
-.lang-select:has(option[value="de"]:checked) .lang-go-de {
-	display: inline-flex;
-}
-
 .sr-only {
 	position: absolute;
 	width: 1px;

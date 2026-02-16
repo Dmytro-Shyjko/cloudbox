@@ -45,15 +45,12 @@
 
 			<form class="lang-select" method="get" aria-label="Language switcher">
 				<label class="sr-only" for="lang-switch">Language</label>
-				<select id="lang-switch" name="lang">
+				<select id="lang-switch" onchange="this.form.action=this.value;this.form.submit()">
 					{% set active_lang = session.get('lang', 'en') %}
-					<option value="en" {% if active_lang == 'en' %}selected{% endif %}>EN</option>
-					<option value="uk" {% if active_lang == 'uk' %}selected{% endif %}>UA</option>
-					<option value="de" {% if active_lang == 'de' %}selected{% endif %}>DE</option>
+					<option value="{{ url_for('auth.set_lang', lang='en') }}" {% if active_lang == 'en' %}selected{% endif %}>EN</option>
+					<option value="{{ url_for('auth.set_lang', lang='uk') }}" {% if active_lang == 'uk' %}selected{% endif %}>UA</option>
+					<option value="{{ url_for('auth.set_lang', lang='de') }}" {% if active_lang == 'de' %}selected{% endif %}>DE</option>
 				</select>
-				<button class="lang-go lang-go-en" type="submit" formaction="{{ url_for('auth.set_lang', lang='en') }}">Go</button>
-				<button class="lang-go lang-go-uk" type="submit" formaction="{{ url_for('auth.set_lang', lang='uk') }}">Go</button>
-				<button class="lang-go lang-go-de" type="submit" formaction="{{ url_for('auth.set_lang', lang='de') }}">Go</button>
 			</form>
 		</div>
 	</div>
