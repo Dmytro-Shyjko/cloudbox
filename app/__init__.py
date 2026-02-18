@@ -1,4 +1,5 @@
-from flask import Flask, session
+from flask import Flask, session, render_template
+from jinja2 import TemplateNotFound
 from pathlib import Path
 import os
 
@@ -8,6 +9,13 @@ from .models import init_db
 
 def create_app(test_config=None):
 	app = Flask(__name__, instance_relative_config=True)
+
+	def _upload_max_mb() -> int:
+		try:
+			value = int(os.environ.get("UPLOAD_MAX_MB", "1024"))
+		except (TypeError, ValueError):
+			return 1024
+		return value if value > 0 else 1024
 
 	secret_key = os.environ.get("SECRET_KEY")
 	if not secret_key or len(secret_key) < 32:
@@ -19,6 +27,7 @@ def create_app(test_config=None):
 	app.config["SESSION_COOKIE_SECURE"] = True
 	app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
 	app.config["DATABASE"] = str(Path(app.instance_path) / "cloudbox.sqlite3")
+	app.config["MAX_CONTENT_LENGTH"] = _upload_max_mb() * 1024 * 1024
 
 	# BETA
 	app.config["BETA_MAX_USERS"] = 50  # постав будь-яке число
@@ -86,6 +95,16 @@ def create_app(test_config=None):
 		if now - int(last) >= 60:
 			touch_user_activity(app, int(uid))
 			session["_last_touch"] = now
+
+	@app.errorhandler(413)
+	def request_entity_too_large(_err):
+		try:
+			return render_template("413.html"), 413
+		except TemplateNotFound:
+			return (
+				"<h1>Upload too large</h1><p>Your file exceeds the allowed upload limit.</p>",
+				413,
+			)
 
 
 	# --- blueprints (import AFTER app exists) ---
