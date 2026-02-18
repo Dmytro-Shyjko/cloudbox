@@ -1,5 +1,5 @@
 [Unit]
-Description=CloudBox Flask Application
+Description=CloudBox Gunicorn Service
 After=network.target
 
 [Service]
@@ -8,7 +8,7 @@ User=cloudbox
 Group=cloudbox
 WorkingDirectory=/opt/cloudbox
 EnvironmentFile=/etc/cloudbox/cloudbox.env
-ExecStart=/opt/cloudbox/.venv/bin/gunicorn --workers 2 --bind 0.0.0.0:8000 run:app
+ExecStart=/opt/cloudbox/.venv/bin/gunicorn --workers 2 --threads 4 --timeout 120 --bind 127.0.0.1:8000 --access-logfile - --error-logfile - "app:create_app()"
 Restart=on-failure
 RestartSec=5
 
