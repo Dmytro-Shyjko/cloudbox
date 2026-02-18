@@ -1,7 +1,7 @@
 .admin-wrap {
-  max-width: 1100px;
-  margin: 0 auto;
-  padding: 16px;
+	max-width: 1200px;
+	margin: 0 auto;
+	padding: 16px;
 }
 
 .admin-header {
@@ -37,9 +37,10 @@
 }
 
 .admin-table {
-  width: 100%;
-  border-collapse: collapse;
-  min-width: 900px;
+	width: 100%;
+	table-layout: fixed;
+	border-collapse: collapse;
+	min-width: 0;
 }
 
 .admin-table thead th {
@@ -53,14 +54,48 @@
 }
 
 .admin-table tbody td {
-  padding: 12px 12px;
-  border-bottom: 1px solid rgba(0,0,0,0.08);
-  vertical-align: top;
+	padding: 12px 12px;
+	border-bottom: 1px solid rgba(0,0,0,0.08);
+	vertical-align: top;
+}
+
+.admin-table tbody tr:nth-child(even) {
+	background: rgba(15,23,42,0.02);
+}
+
+.admin-table tbody tr:hover {
+	background: rgba(30,58,138,0.06);
+}
+
+.col-id {
+	width: 6%;
+}
+
+.col-user {
+	width: 25%;
+}
+
+.col-status,
+.col-premium {
+	width: 10%;
+}
+
+.col-storage {
+	width: 11%;
+}
+
+.col-last-active,
+.col-created {
+	width: 13%;
+}
+
+.col-actions {
+	width: 12%;
 }
 
 .th-actions {
-  text-align: left;
-  width: 320px;
+	text-align: left;
+	width: auto;
 }
 
 .row-muted {
@@ -83,31 +118,51 @@
 }
 
 .user-meta {
-  display: flex;
-  gap: 8px;
-  align-items: center;
-  flex-wrap: wrap;
-  font-size: 13px;
-  opacity: 0.9;
+	display: flex;
+	gap: 8px;
+	align-items: center;
+	flex-wrap: wrap;
+	font-size: 13px;
+	opacity: 0.9;
+}
+
+.meta-label {
+	opacity: 0.75;
 }
 
 .role-form {
-  display: inline-flex;
-  gap: 8px;
-  align-items: center;
+	display: inline-flex;
+	gap: 8px;
+	align-items: center;
 }
 
 .role-form select {
-  padding: 6px 8px;
-  border-radius: 8px;
-  border: 1px solid rgba(0,0,0,0.2);
+	padding: 7px 10px;
+	border-radius: 8px;
+	border: 1px solid rgba(0,0,0,0.2);
+	max-width: 130px;
+}
+
+.role-form .btn {
+	height: 34px;
+	padding: 0 12px;
+	font-size: 12px;
 }
 
 .actions {
-  display: flex;
-  gap: 8px;
-  flex-wrap: wrap;
-  align-items: center;
+	display: grid;
+	grid-template-columns: repeat(2, minmax(0, 1fr));
+	gap: 8px;
+	align-items: stretch;
+}
+
+.actions form {
+	margin: 0;
+}
+
+.actions .btn,
+.actions form .btn {
+	width: 100%;
 }
 
 .mono {
@@ -146,16 +201,24 @@
 }
 
 .btn {
-  padding: 7px 10px;
-  border-radius: 10px;
-  border: 1px solid rgba(0,0,0,0.18);
-  background: rgba(255,255,255,0.9);
-  cursor: pointer;
-  font-size: 13px;
-  text-decoration: none;
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
+	height: 34px;
+	padding: 0 12px;
+	border-radius: 10px;
+	border: 1px solid rgba(0,0,0,0.18);
+	background: rgba(255,255,255,0.9);
+	cursor: pointer;
+	font-size: 13px;
+	font-weight: 600;
+	text-decoration: none;
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	gap: 6px;
+}
+
+.btn:focus-visible {
+	outline: 2px solid rgba(30,58,138,0.55);
+	outline-offset: 1px;
 }
 
 .btn:disabled {
@@ -298,13 +361,14 @@
 /* Обмежуємо вплив тільки адмінкою */
 .admin-wrap .btn,
 .admin-wrap button.btn {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	gap: 8px;
 
-  padding: 9px 12px;
-  border-radius: 10px;
+	height: 34px;
+	padding: 0 12px;
+	border-radius: 10px;
 
   border: 1px solid rgba(0,0,0,0.18);
 
@@ -313,15 +377,21 @@
   color: #ffffff;
 
   text-decoration: none;
-  font-size: 13px;
-  font-weight: 600;
+	font-size: 13px;
+	font-weight: 600;
 
   cursor: pointer;
 }
 
 .admin-wrap .btn:hover,
 .admin-wrap button.btn:hover {
-  filter: brightness(1.08);
+	filter: brightness(1.08);
+}
+
+.admin-wrap .btn:focus-visible,
+.admin-wrap button.btn:focus-visible {
+	outline: 2px solid rgba(30,58,138,0.55);
+	outline-offset: 1px;
 }
 
 .admin-wrap .btn:disabled,
@@ -388,5 +458,21 @@
 
 /* Моноширинний текст (дати/розміри) */
 .admin-wrap .mono {
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+	font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+}
+
+@media (max-width: 900px) {
+	.col-created {
+		display: none;
+	}
+}
+
+@media (max-width: 800px) {
+	.col-last-active {
+		display: none;
+	}
+
+	.actions {
+		grid-template-columns: 1fr;
+	}
 }
