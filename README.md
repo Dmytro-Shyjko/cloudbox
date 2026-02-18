@@ -313,3 +313,6 @@ Example `/etc/cloudbox/cloudbox.env` content:
 ```
 SECRET_KEY=replace-with-a-random-secret-at-least-32-characters-long
 ```
+
+## Security note
+Secure session cookies require HTTPS; Cloudflare Tunnel provides HTTPS externally for CloudBox deployments behind Nginx.
