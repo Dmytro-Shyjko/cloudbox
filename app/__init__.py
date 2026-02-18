@@ -1,5 +1,6 @@
 from flask import Flask, session
 from pathlib import Path
+import os
 
 from .i18n import get_lang, t, SUPPORTED_LANGS
 from .models import init_db
@@ -8,8 +9,12 @@ from .models import init_db
 def create_app(test_config=None):
     app = Flask(__name__, instance_relative_config=True)
 
+    secret_key = os.environ.get("SECRET_KEY")
+    if not secret_key or len(secret_key) < 32:
+        raise RuntimeError("SECRET_KEY must be set in the environment and contain at least 32 characters")
+
     # --- base config ---
-    app.config["SECRET_KEY"] = "change-me-in-production"
+    app.config["SECRET_KEY"] = secret_key
     app.config["DATABASE"] = str(Path(app.instance_path) / "cloudbox.sqlite3")
 
     # BETA

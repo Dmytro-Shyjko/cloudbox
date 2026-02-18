@@ -14,3 +14,7 @@ upload_blocked_tests/
 __pycache__/
 *.pyc
 
+
+# runtime secrets
+cloudbox.env
+/etc/cloudbox/cloudbox.env

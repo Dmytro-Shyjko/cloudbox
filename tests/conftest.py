@@ -23,12 +23,12 @@ def app(tmp_path):
 
     db_path = str(tmp_path / "test.sqlite3")
     os.environ["FLASK_ENV"] = "testing"
+    os.environ["SECRET_KEY"] = "test-secret-key-1234567890-abcdefgh"
 
     app = create_app(
         {
             "TESTING": True,
             "DATABASE": db_path,
-            "SECRET_KEY": "test-secret-key",
         }
     )
 

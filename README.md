@@ -299,3 +299,17 @@ admin не може “сам себе” понизити (щоб не втра
 всі адмін-дії → в audit log
 
 блокування користувача → скинути його сесію (logout everywhere) — пізніше
+## Runtime secret configuration
+
+CloudBox requires `SECRET_KEY` from environment at startup.
+If `SECRET_KEY` is missing or shorter than 32 characters, app startup fails with `RuntimeError`.
+
+For systemd deployments use:
+- Unit file: `deploy/systemd/cloudbox.service`
+- Environment file: `/etc/cloudbox/cloudbox.env`
+
+Example `/etc/cloudbox/cloudbox.env` content:
+
+```
+SECRET_KEY=replace-with-a-random-secret-at-least-32-characters-long
+```
