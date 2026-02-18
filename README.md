@@ -11,6 +11,11 @@
 - File info (size, date)
 - UI improvements
 
+## Upload request limit
+- `UPLOAD_MAX_MB` sets Flask global request size limit (`MAX_CONTENT_LENGTH`).
+- Default value is `1024` (MB).
+- Requests above this limit return HTTP `413 Request Entity Too Large` with a friendly page.
+
 
 Нижче — детальний, “практичний” функціонал адміна для CloudBox, з чітким поділом: що має робити admin, що можна віддати moderator, і що бачить звичайний користувач. Я орієнтуюсь на твій MVP (файли/папки) + твою вимогу: преміум видає адмін/модератор.
 
