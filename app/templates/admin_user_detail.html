@@ -101,12 +101,14 @@
 
       <div class="admin-actions">
         <form method="post" action="{{ url_for('admin.users_toggle_premium', user_id=user.id) }}">
+          {% include "_csrf.html" %}
           <button class="btn {% if user.is_premium %}btn-warning{% else %}btn-primary{% endif %}" type="submit">
             {% if user.is_premium %}Remove Premium{% else %}Make Premium{% endif %}
           </button>
         </form>
 
         <form method="post" action="{{ url_for('admin.users_toggle_block', user_id=user.id) }}">
+          {% include "_csrf.html" %}
           <button
             class="btn {% if user.is_active %}btn-warning{% else %}btn-primary{% endif %}"
             type="submit"
@@ -123,6 +125,7 @@
 
       {% if me_is_admin %}
         <form method="post" action="{{ url_for('admin.users_set_role', user_id=user.id) }}">
+          {% include "_csrf.html" %}
           <div class="admin-role-row">
             <select name="role" class="select" {% if user.id == me_id %}disabled{% endif %}>
               <option value="user" {{ "selected" if user.role == "user" else "" }}>user</option>
@@ -154,6 +157,7 @@
           action="{{ url_for('admin.users_delete', user_id=user.id) }}"
           onsubmit="return confirm('Видалити користувача {{ user.username }} (#{{ user.id }})?\n\nЦе видалить і файли користувача. Дію не можна скасувати.');"
         >
+          {% include "_csrf.html" %}
           <button
             class="btn btn-danger"
             type="submit"

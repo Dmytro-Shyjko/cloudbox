@@ -1,7 +1,7 @@
 import io
 
 
-def test_upload_over_max_content_length_returns_413(app, client):
+def test_upload_over_max_content_length_returns_413(app, client, csrf_token):
 	app.config["MAX_CONTENT_LENGTH"] = 1024
 
 	with client.session_transaction() as sess:
@@ -12,6 +12,7 @@ def test_upload_over_max_content_length_returns_413(app, client):
 		"/files",
 		data={
 			"action": "upload",
+			"csrf_token": csrf_token("/files"),
 			"file": (io.BytesIO(b"a" * 2048), "big.txt"),
 		},
 		content_type="multipart/form-data",

@@ -14,6 +14,7 @@
 			<form method="post"
 				action="{{ url_for('auth.login_post') if mode == 'login' else url_for('auth.register_post') }}"
 				class="auth-form">
+				{% include "_csrf.html" %}
 
 				<!-- Username -->
 				<label>{{ t("auth.username") }}</label>

@@ -38,6 +38,7 @@
 <div class="card" style="margin-bottom:16px;">
   <h2>{{ t("folders.title") }}</h2>
   <form method="post" action="{{ url_for('main.files', path=path) }}">
+    {% include "_csrf.html" %}
     <input type="hidden" name="action" value="mkdir">
     <label>{{ t("folders.new") }}</label>
     <input name="folder" placeholder="docs" required>
@@ -49,6 +50,7 @@
 <div class="card" id="upload">
   <h2>{{ t("files.upload_title") }}</h2>
   <form method="post" enctype="multipart/form-data" action="{{ url_for('main.files', path=path) }}">
+    {% include "_csrf.html" %}
     <input type="hidden" name="action" value="upload">
     <input type="file" name="file" required>
     <button type="submit">{{ t("nav.upload") }}</button>
@@ -110,6 +112,7 @@
                 <form method="post"
                       class="action-form"
                       action="{{ url_for('main.files', path=path) }}">
+                  {% include "_csrf.html" %}
                   <input type="hidden" name="action" value="rename">
                   <input type="hidden" name="old" value="{{ folder_name }}">
                   <input name="new" placeholder="{{ t('files.rename_to') }}" required>
@@ -128,6 +131,7 @@
                 <form method="post"
                       class="action-form"
                       action="{{ url_for('main.files', path=path) }}">
+                  {% include "_csrf.html" %}
                   <input type="hidden" name="action" value="move_folder">
                   <input type="hidden" name="old" value="{{ folder_name }}">
 
@@ -152,6 +156,7 @@
               <form method="post"
                     action="{{ url_for('main.delete_folder', folder=folder_path, path=path) }}"
                     onsubmit="return confirm({{ t('folders.delete_confirm')|tojson }});">
+                {% include "_csrf.html" %}
                 <button class="action-item action-danger" type="submit">
                   {{ t("folders.delete") }}
                 </button>
@@ -161,6 +166,7 @@
               <form method="post"
                     action="{{ url_for('main.delete_folder_recursive', folder=folder_path, path=path) }}"
                     onsubmit="return confirm({{ t('folders.delete_confirm_recursive')|tojson }});">
+                {% include "_csrf.html" %}
                 <button class="action-item action-danger" type="submit">
                   {{ t("folders.delete") }} *
                 </button>
@@ -201,6 +207,7 @@
                   {{ t("files.rename") }}
                 </summary>
                 <form method="post" class="action-form" action="{{ url_for('main.files', path=path) }}">
+                  {% include "_csrf.html" %}
                   <input type="hidden" name="action" value="rename">
                   <input type="hidden" name="old" value="{{ fname }}">
                   <input name="new" placeholder="{{ t('files.rename_to') }}" required>
@@ -216,6 +223,7 @@
                   {{ t("files.move") }}
                 </summary>
                 <form class="action-form" method="post" action="{{ url_for('main.files', path=path) }}">
+                  {% include "_csrf.html" %}
                   <input type="hidden" name="action" value="move">
                   <input type="hidden" name="old" value="{{ fname }}">
 
@@ -239,6 +247,7 @@
                     method="post"
                     action="{{ url_for('main.delete_file', filepath=full, path=path) }}"
                     onsubmit="return confirm({{ t('files.delete_confirm')|tojson }});">
+                {% include "_csrf.html" %}
                 <button class="action-item action-danger" type="submit">
                   {{ t("files.delete") }}
                 </button>
