@@ -50,6 +50,7 @@
                   Role:
                   {% if me_is_admin %}
                     <form class="role-form" method="post" action="{{ url_for('admin.users_set_role', user_id=u.id) }}">
+                      {% include "_csrf.html" %}
                       <select name="role" {% if u.id == me_id %}disabled{% endif %}>
                         <option value="user" {{ "selected" if u.role == "user" else "" }}>user</option>
                         <option value="moderator" {{ "selected" if u.role == "moderator" else "" }}>moderator</option>
@@ -90,12 +91,14 @@
               <a class="btn btn-primary" href="{{ url_for('admin.user_detail', user_id=u.id) }}">Open</a>
 
               <form method="post" action="{{ url_for('admin.users_toggle_premium', user_id=u.id) }}">
+                {% include "_csrf.html" %}
                 <button class="btn btn-secondary" type="submit">
                   {% if u.is_premium %}Remove premium{% else %}Give premium{% endif %}
                 </button>
               </form>
 
               <form method="post" action="{{ url_for('admin.users_toggle_block', user_id=u.id) }}">
+                {% include "_csrf.html" %}
                 <button class="btn btn-warning" type="submit" {% if u.id == me_id %}disabled{% endif %}>
                   {% if u.is_active %}Block{% else %}Unblock{% endif %}
                 </button>

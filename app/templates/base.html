@@ -30,6 +30,7 @@
 			{% endif %}
 
 			<form class="lang-form" method="post" action="{{ url_for('auth.set_lang_post') }}">
+				{% include "_csrf.html" %}
 				<select class="lang-select" name="lang" onchange="this.form.submit()">
 					<option value="en" {% if current_lang == 'en' %}selected{% endif %}>EN</option>
 					<option value="uk" {% if current_lang == 'uk' %}selected{% endif %}>UA</option>

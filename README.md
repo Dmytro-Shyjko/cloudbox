@@ -16,6 +16,11 @@
 - Default value is `1024` (MB).
 - Requests above this limit return HTTP `413 Request Entity Too Large` with a friendly page.
 
+## CSRF protection
+- CSRF is enabled globally via Flask-WTF (`CSRFProtect`) for POST endpoints.
+- All HTML `<form method="post">` include a CSRF token field.
+- If a non-browser client sends POST requests, include the token as `csrf_token` form field or `X-CSRFToken` header.
+
 
 Нижче — детальний, “практичний” функціонал адміна для CloudBox, з чітким поділом: що має робити admin, що можна віддати moderator, і що бачить звичайний користувач. Я орієнтуюсь на твій MVP (файли/папки) + твою вимогу: преміум видає адмін/модератор.
 

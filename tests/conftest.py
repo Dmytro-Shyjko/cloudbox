@@ -1,6 +1,7 @@
 import os
 import sys
 import sqlite3
+import re
 import pytest
 from pathlib import Path
 
@@ -54,3 +55,20 @@ def db(app):
         conn.close()
         return rows
     return _query
+
+
+
+def extract_csrf_token(html: str) -> str:
+	match = re.search(r'name="csrf_token"\s+value="([^"]+)"', html)
+	assert match, "CSRF token not found in HTML"
+	return match.group(1)
+
+
+@pytest.fixture()
+def csrf_token(client):
+	def _token(path: str) -> str:
+		resp = client.get(path)
+		assert resp.status_code == 200
+		return extract_csrf_token(resp.get_data(as_text=True))
+
+	return _token

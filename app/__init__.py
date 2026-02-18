@@ -1,10 +1,14 @@
 from flask import Flask, session, render_template
+from flask_wtf.csrf import CSRFProtect
 from jinja2 import TemplateNotFound
 from pathlib import Path
 import os
 
 from .i18n import get_lang, t, SUPPORTED_LANGS
 from .models import init_db
+
+
+csrf = CSRFProtect()
 
 
 def create_app(test_config=None):
@@ -65,6 +69,9 @@ def create_app(test_config=None):
 
 	# Ensure instance folder exists
 	Path(app.instance_path).mkdir(parents=True, exist_ok=True)
+
+	# CSRF protection for all POST forms/endpoints.
+	csrf.init_app(app)
 
 	# init DB
 	init_db(app)
