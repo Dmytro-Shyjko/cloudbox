@@ -47,14 +47,38 @@
 </div>
 
 <!-- ================= Upload ================= -->
-<div class="card" id="upload">
-  <h2>{{ t("files.upload_title") }}</h2>
-  <form method="post" enctype="multipart/form-data" action="{{ url_for('main.files', path=path) }}">
-    {% include "_csrf.html" %}
-    <input type="hidden" name="action" value="upload">
-    <input type="file" name="file" required>
-    <button type="submit">{{ t("nav.upload") }}</button>
-  </form>
+<div class="card" id="upload" data-chunked-upload-root data-user-id="{{ session.get('user_id') }}" data-target-path="{{ path }}" data-chunked-threshold-bytes="{{ 20 * 1024 * 1024 }}">
+	<h2>{{ t("files.upload_title") }}</h2>
+	<form method="post" enctype="multipart/form-data" action="{{ url_for('main.files', path=path) }}" data-upload-form>
+		{% include "_csrf.html" %}
+		<input type="hidden" name="action" value="upload">
+		<input type="file" name="file" required data-upload-file>
+		<button type="submit" data-upload-submit>{{ t("nav.upload") }}</button>
+	</form>
+</div>
+
+<div id="chunked-upload-modal" class="chunked-upload-modal" hidden>
+	<div class="chunked-upload-dialog card">
+		<div class="chunked-upload-header">
+			<h3>Chunked upload</h3>
+			<button type="button" class="chunked-upload-close" data-cu-close>×</button>
+		</div>
+		<div class="chunked-upload-body">
+			<p><b>File:</b> <span data-cu-filename>-</span></p>
+			<p><b>Size:</b> <span data-cu-size>0 B</span></p>
+			<div class="chunked-upload-progress-wrap">
+				<div class="chunked-upload-progress-bar" data-cu-progress-bar></div>
+			</div>
+			<p><b>Progress:</b> <span data-cu-progress>0%</span></p>
+			<p><b>Chunks:</b> <span data-cu-chunks>0 / 0</span></p>
+			<p class="muted" data-cu-status>Waiting for upload...</p>
+		</div>
+		<div class="chunked-upload-actions">
+			<button type="button" data-cu-pause>Pause</button>
+			<button type="button" data-cu-resume>Resume</button>
+			<button type="button" data-cu-cancel>Cancel</button>
+		</div>
+	</div>
 </div>
 
 <!-- ================= Listing ================= -->
@@ -263,4 +287,8 @@
     <p class="muted">{{ t("files.no_files") }}</p>
   {% endif %}
 </div>
+{% endblock %}
+
+{% block extra_js %}
+<script src="{{ url_for('static', filename='chunked_upload.js') }}"></script>
 {% endblock %}

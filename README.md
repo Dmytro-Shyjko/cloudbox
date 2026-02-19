@@ -334,3 +334,11 @@ SECRET_KEY=replace-with-a-random-secret-at-least-32-characters-long
 
 ## Security note
 Secure session cookies require HTTPS; Cloudflare Tunnel provides HTTPS externally for CloudBox deployments behind Nginx.
+
+## Chunked upload UI
+- The files page now auto-switches to chunked uploads for files larger than 20MB; smaller files still use the classic form POST flow unchanged.
+- A modal shows filename, size, percent, chunk counters, and status with Pause / Resume / Cancel controls.
+- Resume metadata is stored in `localStorage` using `cb_upload_<user_id>_<name|size|lastModified> -> upload_id`.
+- On resume the client calls `GET /api/uploads/<upload_id>/status`, uploads only `missing_chunks` sequentially, then calls `/complete`.
+- Pause aborts in-flight requests but keeps upload state; Cancel aborts then calls `/cancel` and removes localStorage state.
+
