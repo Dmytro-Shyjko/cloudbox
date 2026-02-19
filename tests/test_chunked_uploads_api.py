@@ -1,4 +1,5 @@
 import re
+import hashlib
 from pathlib import Path
 
 
@@ -345,3 +346,137 @@ def test_csrf_header_required_for_post_endpoints(client, db):
 		},
 	)
 	assert resp_ok.status_code == 200
+
+
+def _upload_chunk(client, upload_id, csrf, chunk_index, chunk_data):
+	return client.post(
+		f"/api/uploads/{upload_id}/chunk",
+		data=chunk_data,
+		headers={
+			"Content-Type": "application/octet-stream",
+			"X-Chunk-Index": str(chunk_index),
+			"X-Chunk-Size": str(len(chunk_data)),
+			"X-CSRFToken": csrf,
+		},
+	)
+
+
+def test_complete_happy_path(client, db, app):
+	_insert_user(db)
+	_set_logged_in(client)
+	csrf = _csrf_from_page(client)
+	chunks = [b"a" * 4, b"bcde", b"fgh"]
+	content = b"".join(chunks)
+	upload_id = _create_upload(client, csrf, total_size=len(content), chunk_size=4, total_chunks=3)
+
+	for idx, chunk in enumerate(chunks):
+		resp = _upload_chunk(client, upload_id, csrf, idx, chunk)
+		assert resp.status_code == 200
+
+	complete_resp = client.post(f"/api/uploads/{upload_id}/complete", headers={"X-CSRFToken": csrf})
+	assert complete_resp.status_code == 200
+	payload = complete_resp.get_json()
+	assert payload["ok"] is True
+	assert payload["status"] == "completed"
+	assert payload["duplicate"] is False
+
+	upload_rows = db("SELECT status, sha256_final FROM uploads WHERE id = ?", (upload_id,))
+	assert upload_rows[0]["status"] == "completed"
+	assert upload_rows[0]["sha256_final"] == hashlib.sha256(content).hexdigest()
+
+	tmp_upload_dir = Path(app.config["UPLOAD_TMP_DIR_ABS"]) / "1" / upload_id
+	assert not tmp_upload_dir.exists()
+
+	final_path = Path(app.root_path).parent / "storage" / "1" / "chunk.bin"
+	assert final_path.exists()
+	assert final_path.read_bytes() == content
+
+	file_rows = db("SELECT id, filename, size, sha256 FROM user_files WHERE user_id = ?", (1,))
+	assert len(file_rows) == 1
+	assert str(file_rows[0]["id"]) == payload["file_id"]
+	assert file_rows[0]["filename"] == "chunk.bin"
+	assert file_rows[0]["size"] == len(content)
+	assert file_rows[0]["sha256"] == payload["sha256"]
+
+
+def test_complete_missing_chunks(client, db):
+	_insert_user(db)
+	_set_logged_in(client)
+	csrf = _csrf_from_page(client)
+	upload_id = _create_upload(client, csrf, total_size=12, chunk_size=4, total_chunks=3)
+
+	resp_chunk = _upload_chunk(client, upload_id, csrf, 0, b"aaaa")
+	assert resp_chunk.status_code == 200
+
+	complete_resp = client.post(f"/api/uploads/{upload_id}/complete", headers={"X-CSRFToken": csrf})
+	assert complete_resp.status_code == 409
+	payload = complete_resp.get_json()
+	assert payload["ok"] is False
+	assert payload["error"] == "missing_chunks"
+	assert payload["missing_chunks"] == [1, 2]
+
+	upload_rows = db("SELECT status FROM uploads WHERE id = ?", (upload_id,))
+	assert upload_rows[0]["status"] in ("initiated", "uploading")
+
+
+def test_complete_idempotency_double_call(client, db):
+	_insert_user(db)
+	_set_logged_in(client)
+	csrf = _csrf_from_page(client)
+	chunks = [b"aaa", b"bbb", b"ccc"]
+	content = b"".join(chunks)
+	upload_id = _create_upload(client, csrf, total_size=len(content), chunk_size=3, total_chunks=3)
+
+	for idx, chunk in enumerate(chunks):
+		resp = _upload_chunk(client, upload_id, csrf, idx, chunk)
+		assert resp.status_code == 200
+
+	first_complete = client.post(f"/api/uploads/{upload_id}/complete", headers={"X-CSRFToken": csrf})
+	assert first_complete.status_code == 200
+
+	second_complete = client.post(f"/api/uploads/{upload_id}/complete", headers={"X-CSRFToken": csrf})
+	assert second_complete.status_code == 409
+
+	file_rows = db("SELECT id FROM user_files WHERE user_id = ? AND sha256 = ?", (1, hashlib.sha256(content).hexdigest()))
+	assert len(file_rows) == 1
+
+
+def test_complete_duplicate_detection(client, db, app):
+	_insert_user(db)
+	_set_logged_in(client)
+	csrf = _csrf_from_page(client)
+	content = b"duplicate-content"
+	sha256_content = hashlib.sha256(content).hexdigest()
+
+	storage_dir = Path(app.root_path).parent / "storage" / "1"
+	storage_dir.mkdir(parents=True, exist_ok=True)
+	existing_path = storage_dir / "existing.bin"
+	existing_path.write_bytes(content)
+
+	db(
+		"""
+		INSERT INTO user_files (user_id, path, filename, size, sha256)
+		VALUES (?, ?, ?, ?, ?)
+		""",
+		(1, "", "existing.bin", len(content), sha256_content),
+	)
+	existing_row = db("SELECT id FROM user_files WHERE user_id = ? AND sha256 = ?", (1, sha256_content))[0]
+
+	upload_id = _create_upload(client, csrf, total_size=len(content), chunk_size=5, total_chunks=4)
+	for idx, start in enumerate(range(0, len(content), 5)):
+		chunk = content[start : start + 5]
+		resp = _upload_chunk(client, upload_id, csrf, idx, chunk)
+		assert resp.status_code == 200
+
+	complete_resp = client.post(f"/api/uploads/{upload_id}/complete", headers={"X-CSRFToken": csrf})
+	assert complete_resp.status_code == 200
+	payload = complete_resp.get_json()
+	assert payload["duplicate"] is True
+	assert payload["file_id"] == str(existing_row["id"])
+	assert payload["sha256"] == sha256_content
+
+	final_path = Path(app.root_path).parent / "storage" / "1" / "chunk.bin"
+	assert not final_path.exists()
+
+	count_rows = db("SELECT COUNT(*) AS c FROM user_files WHERE user_id = ? AND sha256 = ?", (1, sha256_content))
+	assert count_rows[0]["c"] == 1
