@@ -450,6 +450,8 @@ def test_complete_duplicate_detection(client, db, app):
 
 	storage_dir = Path(app.root_path).parent / "storage" / "1"
 	storage_dir.mkdir(parents=True, exist_ok=True)
+	final_path = storage_dir / "chunk.bin"
+	final_path.unlink(missing_ok=True)
 	existing_path = storage_dir / "existing.bin"
 	existing_path.write_bytes(content)
 
@@ -475,8 +477,49 @@ def test_complete_duplicate_detection(client, db, app):
 	assert payload["file_id"] == str(existing_row["id"])
 	assert payload["sha256"] == sha256_content
 
-	final_path = Path(app.root_path).parent / "storage" / "1" / "chunk.bin"
 	assert not final_path.exists()
+
+	count_rows = db("SELECT COUNT(*) AS c FROM user_files WHERE user_id = ? AND sha256 = ?", (1, sha256_content))
+	assert count_rows[0]["c"] == 1
+	assert existing_path.exists()
+	assert existing_path.read_bytes() == content
+
+
+def test_complete_duplicate_does_not_delete_existing_same_target_file(client, db, app):
+	_insert_user(db)
+	_set_logged_in(client)
+	csrf = _csrf_from_page(client)
+	content = b"same-target-duplicate"
+	sha256_content = hashlib.sha256(content).hexdigest()
+
+	storage_dir = Path(app.root_path).parent / "storage" / "1"
+	storage_dir.mkdir(parents=True, exist_ok=True)
+	existing_path = storage_dir / "chunk.bin"
+	existing_path.write_bytes(content)
+
+	db(
+		"""
+		INSERT INTO user_files (user_id, path, filename, size, sha256)
+		VALUES (?, ?, ?, ?, ?)
+		""",
+		(1, "", "chunk.bin", len(content), sha256_content),
+	)
+	existing_row = db("SELECT id FROM user_files WHERE user_id = ? AND sha256 = ?", (1, sha256_content))[0]
+
+	upload_id = _create_upload(client, csrf, total_size=len(content), chunk_size=5, total_chunks=5)
+	for idx, start in enumerate(range(0, len(content), 5)):
+		chunk = content[start : start + 5]
+		resp = _upload_chunk(client, upload_id, csrf, idx, chunk)
+		assert resp.status_code == 200
+
+	complete_resp = client.post(f"/api/uploads/{upload_id}/complete", headers={"X-CSRFToken": csrf})
+	assert complete_resp.status_code == 200
+	payload = complete_resp.get_json()
+	assert payload["duplicate"] is True
+	assert payload["file_id"] == str(existing_row["id"])
+
+	assert existing_path.exists()
+	assert existing_path.read_bytes() == content
 
 	count_rows = db("SELECT COUNT(*) AS c FROM user_files WHERE user_id = ? AND sha256 = ?", (1, sha256_content))
 	assert count_rows[0]["c"] == 1

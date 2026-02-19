@@ -337,8 +337,9 @@ Secure session cookies require HTTPS; Cloudflare Tunnel provides HTTPS externall
 
 ## Chunked upload UI
 - The files page now auto-switches to chunked uploads for files larger than 20MB; smaller files still use the classic form POST flow unchanged.
+- The upload button is handled by JavaScript (`type="button"`), and chunked flow is API-only (`/init`, `/chunk`, `/status`, `/complete`, `/cancel`) so it does not trigger classic form POST resubmission.
 - A modal shows filename, size, percent, chunk counters, and status with Pause / Resume / Cancel controls.
 - Resume metadata is stored in `localStorage` using `cb_upload_<user_id>_<name|size|lastModified> -> upload_id`.
 - On resume the client calls `GET /api/uploads/<upload_id>/status`, uploads only `missing_chunks` sequentially, then calls `/complete`.
 - Pause aborts in-flight requests but keeps upload state; Cancel aborts then calls `/cancel` and removes localStorage state.
-
+- After chunked completion (including duplicate skip) or cancel, the file input is cleared and UI navigates with a GET URL (`?uploaded=1`) to avoid browser resend-data prompts.
