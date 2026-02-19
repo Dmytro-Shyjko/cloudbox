@@ -18,8 +18,8 @@
 
 ## Chunked upload foundation (backend only)
 - Added config + DB foundation and API skeleton routes for resumable/chunked uploads.
-- API skeleton now includes `POST /api/uploads/init`, `GET /api/uploads/<upload_id>/status`, and `POST /api/uploads/<upload_id>/cancel`.
-- `/chunk` upload and `/complete` assembly are intentionally not implemented yet.
+- API now includes `POST /api/uploads/init`, `POST /api/uploads/<upload_id>/chunk`, `GET /api/uploads/<upload_id>/status`, and `POST /api/uploads/<upload_id>/cancel`.
+- `/chunk` upload is implemented for raw octet-stream chunk writes with DB tracking; `/complete` assembly is still intentionally not implemented.
 - Temporary chunks directory is configured via `UPLOAD_TMP_DIR` and created on app startup.
 - Cleanup/resume metadata is stored in `uploads` and `upload_chunks` tables with TTL controls (`UPLOAD_TTL_HOURS`).
 
