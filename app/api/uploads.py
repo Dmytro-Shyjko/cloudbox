@@ -94,6 +94,57 @@ def resolve_final_file_path(user_id: int, target_path: str, filename_final: str)
 	return final_path
 
 
+def _is_path_within(base: Path, candidate: Path) -> bool:
+	try:
+		base_resolved = base.resolve(strict=False)
+		candidate_resolved = candidate.resolve(strict=False)
+		return os.path.commonpath([str(base_resolved), str(candidate_resolved)]) == str(base_resolved)
+	except (OSError, ValueError):
+		return False
+
+
+def _remove_upload_tmp_dir(user_id: int, upload_id: str, request_id: str | None = None) -> bool:
+	upload_root_dir = resolve_chunk_upload_dir(user_id, upload_id).parent
+	tmp_root = Path(current_app.config["UPLOAD_TMP_DIR_ABS"])
+	if not _is_path_within(tmp_root, upload_root_dir):
+		current_app.logger.error(
+			"COMPLETE request_id=%s refused tmp cleanup outside root user_id=%s upload_id=%s tmp_root=%s candidate=%s",
+			request_id or "-",
+			user_id,
+			upload_id,
+			str(tmp_root.resolve(strict=False)),
+			str(upload_root_dir.resolve(strict=False)),
+		)
+		return False
+
+	parts = upload_root_dir.resolve(strict=False).parts
+	if str(user_id) not in parts or upload_id not in parts:
+		current_app.logger.error(
+			"COMPLETE request_id=%s refused tmp cleanup missing required path segments user_id=%s upload_id=%s candidate=%s",
+			request_id or "-",
+			user_id,
+			upload_id,
+			str(upload_root_dir.resolve(strict=False)),
+		)
+		return False
+
+	if upload_root_dir.exists():
+		try:
+			shutil.rmtree(upload_root_dir)
+		except OSError as exc:
+			current_app.logger.warning(
+				"COMPLETE request_id=%s failed to remove upload temp dir user_id=%s upload_id=%s dir=%s error=%s",
+				request_id or "-",
+				user_id,
+				upload_id,
+				str(upload_root_dir),
+				exc,
+			)
+			return False
+
+	return True
+
+
 @uploads_api_bp.post("/init")
 def init_upload():
 	user_id, auth_error = _api_login_required()
@@ -437,10 +488,7 @@ def cancel_upload(upload_id: str):
 
 	chunk_dir = resolve_chunk_upload_dir(user_id, upload_id).parent
 	if chunk_dir.exists():
-		try:
-			shutil.rmtree(chunk_dir)
-		except OSError as exc:
-			current_app.logger.warning("Failed to remove upload temp dir %s: %s", chunk_dir, exc)
+		_remove_upload_tmp_dir(user_id, upload_id)
 
 	return jsonify({"ok": True, "status": "canceled"})
 
@@ -450,12 +498,13 @@ def complete_upload(upload_id: str):
 	user_id, auth_error = _api_login_required()
 	if auth_error:
 		return auth_error
+	request_id = str(uuid.uuid4())
 
 	now_db = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
 	with get_db(current_app) as conn:
 		upload_row = conn.execute(
 			"""
-			SELECT id, status, total_chunks, target_path, filename_final
+			SELECT id, status, total_chunks, target_path, filename_original, filename_final, total_size
 			FROM uploads
 			WHERE id = ? AND user_id = ?
 			""",
@@ -499,10 +548,28 @@ def complete_upload(upload_id: str):
 		for idx in range(total_chunks):
 			chunk_file = chunk_dir / f"{idx}.part"
 			if not chunk_file.exists():
+				current_app.logger.error(
+					"COMPLETE request_id=%s missing chunk file user_id=%s upload_id=%s chunk_index=%s chunk_path=%s",
+					request_id,
+					user_id,
+					upload_id,
+					idx,
+					str(chunk_file.resolve(strict=False)),
+				)
 				missing_chunks.append(idx)
 
 		missing_chunks = sorted(set(missing_chunks))
 		if len(chunk_rows) != total_chunks or missing_chunks:
+			current_app.logger.error(
+				"COMPLETE request_id=%s missing chunks user_id=%s upload_id=%s total_chunks=%s uploaded_count=%s missing_chunks=%s chunk_dir=%s",
+				request_id,
+				user_id,
+				upload_id,
+				total_chunks,
+				len(chunk_rows),
+				missing_chunks,
+				str(chunk_dir.resolve(strict=False)),
+			)
 			conn.execute(
 				"UPDATE uploads SET status = ?, updated_at = ?, last_activity_at = ? WHERE id = ?",
 				(status, now_db, now_db, upload_id),
@@ -521,28 +588,64 @@ def complete_upload(upload_id: str):
 			)
 
 		try:
+			storage_base = resolve_user_storage_base(user_id)
 			final_path = resolve_final_file_path(
 				user_id=user_id,
 				target_path=upload_row["target_path"] or "",
 				filename_final=upload_row["filename_final"],
 			)
+			if not _is_path_within(storage_base, final_path):
+				raise ValueError("final path escaped user storage base")
 		except ValueError:
 			conn.execute(
 				"UPDATE uploads SET status = 'failed', updated_at = ?, last_activity_at = ? WHERE id = ?",
 				(now_db, now_db, upload_id),
 			)
 			conn.commit()
+			current_app.logger.error(
+				"COMPLETE request_id=%s invalid target path user_id=%s upload_id=%s target_path=%s filename_final=%s",
+				request_id,
+				user_id,
+				upload_id,
+				upload_row["target_path"],
+				upload_row["filename_final"],
+			)
 			return _json_error("invalid target_path", 400)
 
 		final_path.parent.mkdir(parents=True, exist_ok=True)
 		temp_final = final_path.with_name(f"{final_path.name}.{upload_id}.uploading")
 		hasher = hashlib.sha256()
 		size_written = 0
+		expected_total_size = int(upload_row["total_size"])
+		current_app.logger.info(
+			"COMPLETE request_id=%s begin user_id=%s upload_id=%s target_path=%s filename_original=%s filename_final=%s tmp_dir=%s chunk_dir=%s temp_final=%s final_path=%s expected_total_size=%s",
+			request_id,
+			user_id,
+			upload_id,
+			upload_row["target_path"] or "",
+			upload_row["filename_original"],
+			upload_row["filename_final"],
+			str(Path(current_app.config["UPLOAD_TMP_DIR_ABS"]).resolve(strict=False)),
+			str(chunk_dir.resolve(strict=False)),
+			str(temp_final.resolve(strict=False)),
+			str(final_path.resolve(strict=False)),
+			expected_total_size,
+		)
 
 		try:
 			with temp_final.open("wb") as dest:
 				for idx in range(total_chunks):
 					chunk_file = chunk_dir / f"{idx}.part"
+					if not chunk_file.exists():
+						current_app.logger.error(
+							"COMPLETE request_id=%s missing chunk during assembly user_id=%s upload_id=%s chunk_index=%s chunk_path=%s",
+							request_id,
+							user_id,
+							upload_id,
+							idx,
+							str(chunk_file.resolve(strict=False)),
+						)
+						raise FileNotFoundError(f"missing chunk during assembly: {chunk_file}")
 					with chunk_file.open("rb") as src:
 						while True:
 							block = src.read(1024 * 1024)
@@ -555,6 +658,14 @@ def complete_upload(upload_id: str):
 				os.fsync(dest.fileno())
 
 			sha256_final = hasher.hexdigest()
+			current_app.logger.info(
+				"COMPLETE request_id=%s assembled user_id=%s upload_id=%s bytes_written=%s sha256_final=%s",
+				request_id,
+				user_id,
+				upload_id,
+				size_written,
+				sha256_final,
+			)
 
 			existing_file = conn.execute(
 				"SELECT id FROM user_files WHERE user_id = ? AND sha256 = ? ORDER BY id ASC LIMIT 1",
@@ -572,7 +683,44 @@ def complete_upload(upload_id: str):
 					str(temp_final),
 				)
 			else:
-				os.replace(temp_final, final_path)
+				try:
+					os.replace(temp_final, final_path)
+				except OSError as exc:
+					current_app.logger.error(
+						"COMPLETE request_id=%s os.replace failed user_id=%s upload_id=%s temp_final=%s final_path=%s error=%s",
+						request_id,
+						user_id,
+						upload_id,
+						str(temp_final.resolve(strict=False)),
+						str(final_path.resolve(strict=False)),
+						exc,
+					)
+					raise
+
+				if (not os.path.exists(final_path)) or (not final_path.is_file()):
+					current_app.logger.error(
+						"COMPLETE request_id=%s final file missing after replace user_id=%s upload_id=%s final_path=%s",
+						request_id,
+						user_id,
+						upload_id,
+						str(final_path.resolve(strict=False)),
+					)
+					raise OSError("final file missing after replace")
+
+				final_size = final_path.stat().st_size
+				if final_size != size_written or final_size != expected_total_size:
+					current_app.logger.error(
+						"COMPLETE request_id=%s final size mismatch user_id=%s upload_id=%s final_path=%s final_size=%s bytes_written=%s expected_total_size=%s",
+						request_id,
+						user_id,
+						upload_id,
+						str(final_path.resolve(strict=False)),
+						final_size,
+						size_written,
+						expected_total_size,
+					)
+					raise OSError("final size mismatch")
+
 				insert_result = conn.execute(
 					"""
 					INSERT INTO user_files (user_id, path, filename, size, sha256, created_at, updated_at)
@@ -591,6 +739,16 @@ def complete_upload(upload_id: str):
 				file_id = int(insert_result.lastrowid)
 				duplicate = False
 
+			if not duplicate and (not os.path.exists(final_path) or not final_path.is_file()):
+				current_app.logger.error(
+					"COMPLETE request_id=%s db/file mismatch after insert user_id=%s upload_id=%s final_path=%s",
+					request_id,
+					user_id,
+					upload_id,
+					str(final_path.resolve(strict=False)),
+				)
+				raise OSError("db/file mismatch after insert")
+
 			conn.execute(
 				"""
 				UPDATE uploads
@@ -608,15 +766,18 @@ def complete_upload(upload_id: str):
 				(now_db, now_db, upload_id),
 			)
 			conn.commit()
-			current_app.logger.exception("Failed to assemble upload %s: %s", upload_id, exc)
+			current_app.logger.exception(
+				"COMPLETE request_id=%s failed user_id=%s upload_id=%s temp_final=%s final_path=%s error=%s",
+				request_id,
+				user_id,
+				upload_id,
+				str(temp_final.resolve(strict=False)),
+				str(final_path.resolve(strict=False)),
+				exc,
+			)
 			return _json_error("failed to assemble upload", 500)
 
-	upload_root_dir = resolve_chunk_upload_dir(user_id, upload_id).parent
-	if upload_root_dir.exists():
-		try:
-			shutil.rmtree(upload_root_dir)
-		except OSError as exc:
-			current_app.logger.warning("Failed to remove upload temp dir %s: %s", upload_root_dir, exc)
+	_remove_upload_tmp_dir(user_id, upload_id, request_id=request_id)
 
 	return jsonify(
 		{

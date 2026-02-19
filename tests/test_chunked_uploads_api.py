@@ -1,3 +1,4 @@
+import os
 import re
 import hashlib
 from pathlib import Path
@@ -361,6 +362,18 @@ def _upload_chunk(client, upload_id, csrf, chunk_index, chunk_data):
 	)
 
 
+def _prepare_upload_for_complete(client, db):
+	_insert_user(db)
+	_set_logged_in(client)
+	csrf = _csrf_from_page(client)
+	chunks = [b"aaaa", b"bbbb"]
+	upload_id = _create_upload(client, csrf, total_size=8, chunk_size=4, total_chunks=2)
+	for idx, chunk in enumerate(chunks):
+		resp = _upload_chunk(client, upload_id, csrf, idx, chunk)
+		assert resp.status_code == 200
+	return upload_id, csrf, b"".join(chunks)
+
+
 def test_complete_happy_path(client, db, app):
 	_insert_user(db)
 	_set_logged_in(client)
@@ -523,3 +536,88 @@ def test_complete_duplicate_does_not_delete_existing_same_target_file(client, db
 
 	count_rows = db("SELECT COUNT(*) AS c FROM user_files WHERE user_id = ? AND sha256 = ?", (1, sha256_content))
 	assert count_rows[0]["c"] == 1
+
+
+def test_complete_must_not_return_ok_if_replace_fails(client, db, monkeypatch):
+	upload_id, csrf, _ = _prepare_upload_for_complete(client, db)
+
+	def _raise_replace(_src, _dst):
+		raise OSError("replace failed")
+
+	monkeypatch.setattr("app.api.uploads.os.replace", _raise_replace)
+	resp = client.post(f"/api/uploads/{upload_id}/complete", headers={"X-CSRFToken": csrf})
+	assert resp.status_code == 500
+	payload = resp.get_json()
+	assert payload["error"] == "failed to assemble upload"
+
+	rows = db("SELECT status FROM uploads WHERE id = ?", (upload_id,))
+	assert rows[0]["status"] == "failed"
+
+
+def test_complete_must_not_return_ok_if_final_missing(client, db, monkeypatch):
+	upload_id, csrf, _ = _prepare_upload_for_complete(client, db)
+	original_exists = os.path.exists
+
+	def _fake_exists(path):
+		if str(path).endswith("/storage/1/chunk.bin"):
+			return False
+		return original_exists(path)
+
+	monkeypatch.setattr("app.api.uploads.os.path.exists", _fake_exists)
+	resp = client.post(f"/api/uploads/{upload_id}/complete", headers={"X-CSRFToken": csrf})
+	assert resp.status_code == 500
+	payload = resp.get_json()
+	assert payload["error"] == "failed to assemble upload"
+
+	rows = db("SELECT status FROM uploads WHERE id = ?", (upload_id,))
+	assert rows[0]["status"] == "failed"
+
+
+def test_cleanup_guard_prevents_deleting_outside_tmp(client, db, app, monkeypatch):
+	_insert_user(db)
+	_set_logged_in(client)
+	csrf = _csrf_from_page(client)
+	upload_id = "outside-cleanup"
+
+	db(
+		"""
+		INSERT INTO uploads (
+			id, user_id, target_path, filename_original, filename_final,
+			total_size, chunk_size, total_chunks, status,
+			created_at, updated_at, expires_at, last_activity_at
+		)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+		""",
+		(upload_id, 1, "", "a.bin", "a.bin", 2, 1, 2, "initiated"),
+	)
+
+	outside = Path(app.root_path).parent / "outside-cleanup"
+	outside.mkdir(parents=True, exist_ok=True)
+	marker = outside / "marker.txt"
+	marker.write_text("keep", encoding="utf-8")
+
+	from app.api import uploads as uploads_api
+	original_resolve = uploads_api.resolve_chunk_upload_dir
+
+	def _fake_resolve_chunk_upload_dir(user_id, upload_id_arg):
+		if upload_id_arg == upload_id:
+			return outside / "chunks"
+		return original_resolve(user_id, upload_id_arg)
+
+	monkeypatch.setattr("app.api.uploads.resolve_chunk_upload_dir", _fake_resolve_chunk_upload_dir)
+	resp = client.post(f"/api/uploads/{upload_id}/cancel", headers={"X-CSRFToken": csrf})
+	assert resp.status_code == 200
+	assert marker.exists()
+
+
+def test_complete_happy_path_ok_implies_file_exists_and_size_matches(client, db, app):
+	upload_id, csrf, content = _prepare_upload_for_complete(client, db)
+	resp = client.post(f"/api/uploads/{upload_id}/complete", headers={"X-CSRFToken": csrf})
+	assert resp.status_code == 200
+	payload = resp.get_json()
+	assert payload["ok"] is True
+
+	final_path = Path(app.root_path).parent / "storage" / "1" / "chunk.bin"
+	assert final_path.exists()
+	assert final_path.is_file()
+	assert final_path.stat().st_size == len(content)
