@@ -565,23 +565,63 @@ def download(filepath):
 @login_required
 def delete_file(filepath):
     lang = get_lang(session)
+    request_id = current_request_id()
+    user_id = session.get("user_id")
+    referer = request.headers.get("Referer", "")
+    requested_with = request.headers.get("X-Requested-With", "")
+
+    def log_delete_attempt(decision: str, payload_summary: str):
+        current_app.logger.info(
+            "DELETE_ATTEMPT request_id=%s user_id=%s method=%s path=%s referer=%s x_requested_with=%s payload=%s decision=%s",
+            request_id,
+            user_id,
+            request.method,
+            request.path,
+            referer,
+            requested_with,
+            payload_summary,
+            decision,
+        )
+
     # only allow explicit AJAX calls (prevents browser form-resubmit delete replay)
-    if request.headers.get("X-Requested-With") != "XMLHttpRequest":
+    if requested_with != "XMLHttpRequest":
+        log_delete_attempt("rejected:ajax_required", "none")
         return jsonify({"ok": False, "error": "ajax_required"}), 400
 
-    payload = request.get_json(silent=True) or {}
-    back_path = payload.get("path", "")
-    requested_name = safe_filename(payload.get("filename") or "")
-    request_id = current_request_id()
+    if not request.is_json:
+        log_delete_attempt("rejected:json_required", "non_json")
+        return jsonify({"ok": False, "error": "json_required"}), 400
+
+    payload = request.get_json(silent=True)
+    if not isinstance(payload, dict):
+        log_delete_attempt("rejected:json_required", "invalid_json")
+        return jsonify({"ok": False, "error": "json_required"}), 400
+
+    raw_back_path = payload.get("path")
+    raw_filename = payload.get("filename")
+    payload_summary = f"keys={sorted(payload.keys())}"
+
+    if not isinstance(raw_back_path, str) or not isinstance(raw_filename, str):
+        log_delete_attempt("rejected:missing_fields", payload_summary)
+        return jsonify({"ok": False, "error": "missing_fields"}), 400
+
+    back_path = raw_back_path
+    requested_name = safe_filename(raw_filename)
+    if not back_path.strip() and back_path != "":
+        log_delete_attempt("rejected:bad_path", payload_summary)
+        return jsonify({"ok": False, "error": "bad_path"}), 400
+
     try:
         back_rel = safe_rel_path(back_path)
     except ValueError:
+        log_delete_attempt("rejected:bad_path", payload_summary)
         return jsonify({"ok": False, "error": "bad_path"}), 400
 
     try:
         filepath = safe_rel_path(filepath)
         abs_path = resolve_user_path(filepath)
     except ValueError:
+        log_delete_attempt("rejected:bad_path", payload_summary)
         return jsonify({"ok": False, "error": "bad_path"}), 400
 
     resolved_rel = abs_path.relative_to(user_base_dir().resolve()).as_posix()
@@ -589,13 +629,9 @@ def delete_file(filepath):
     resolved_parent = "" if resolved_parent == "." else resolved_parent
 
     if requested_name != abs_path.name or resolved_parent != back_rel:
-        current_app.logger.warning(
-            "delete_rejected_mismatch user_id=%s request_id=%s filepath=%s back_rel=%s requested_name=%s",
-            session.get("user_id"),
-            request_id,
-            resolved_rel,
-            back_rel,
-            requested_name,
+        log_delete_attempt(
+            "rejected:mismatch",
+            f"keys={sorted(payload.keys())} filename={requested_name} path={back_rel} resolved={resolved_rel}",
         )
         return jsonify({"ok": False, "error": "mismatch"}), 400
 
@@ -603,19 +639,15 @@ def delete_file(filepath):
         abs_path.unlink()
         msg = _t(lang, "msg.deleted", filename=abs_path.name)
         redirect_url = url_for("main.files", path=back_rel, msg=msg)
-        current_app.logger.info(
-            "delete_ok user_id=%s request_id=%s filepath=%s",
-            session.get("user_id"),
-            request_id,
-            resolved_rel,
+        log_delete_attempt(
+            "ok",
+            f"keys={sorted(payload.keys())} filename={requested_name} path={back_rel} resolved={resolved_rel}",
         )
         return jsonify({"ok": True, "redirect": redirect_url})
 
-    current_app.logger.warning(
-        "delete_missing user_id=%s request_id=%s filepath=%s",
-        session.get("user_id"),
-        request_id,
-        resolved_rel,
+    log_delete_attempt(
+        "rejected:not_found",
+        f"keys={sorted(payload.keys())} filename={requested_name} path={back_rel} resolved={resolved_rel}",
     )
     return jsonify({"ok": False, "error": "not_found"}), 404
 

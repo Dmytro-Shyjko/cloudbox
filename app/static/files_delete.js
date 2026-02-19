@@ -38,7 +38,10 @@
 	}
 
 	buttons.forEach(function (button) {
-		button.addEventListener('click', function () {
+		button.addEventListener('click', function (event) {
+			if (!event.isTrusted) {
+				return;
+			}
 			deleteFile(button);
 		});
 	});
