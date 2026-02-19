@@ -83,6 +83,7 @@
 
 <!-- ================= Listing ================= -->
 <div class="card" style="margin-top:16px;">
+	<input type="hidden" data-delete-csrf value="{{ csrf_token() }}">
   <h2>{{ t("files.my_files") }}</h2>
   <div class="sortbar">
   <form method="get" action="{{ url_for('main.files') }}">
@@ -266,19 +267,21 @@
               
               <div class="action-sep"></div>
 
-              <!-- Delete -->
-              <form class="action-form"
-                    method="post"
-                    action="{{ url_for('main.delete_file', filepath=full, path=path) }}"
-                    onsubmit="return confirm({{ t('files.delete_confirm')|tojson }});">
-                {% include "_csrf.html" %}
-                <button class="action-item action-danger" type="submit">
-                  {{ t("files.delete") }}
-                </button>
-              </form>
-            </div>
-          </details>
-        </li>
+			  <!-- Delete -->
+			  <button
+				class="action-item action-danger"
+				type="button"
+				data-delete-file
+				data-delete-url="{{ url_for('main.delete_file', filepath=full) }}"
+				data-delete-path="{{ path }}"
+				data-delete-filename="{{ fname }}"
+				data-delete-confirm="{{ t('files.delete_confirm') }}"
+			  >
+				{{ t("files.delete") }}
+			  </button>
+			</div>
+		  </details>
+		</li>
       {% endfor %}
     </ul>
   {% endif %}
@@ -291,4 +294,5 @@
 
 {% block extra_js %}
 <script src="{{ url_for('static', filename='chunked_upload.js') }}"></script>
+<script src="{{ url_for('static', filename='files_delete.js') }}"></script>
 {% endblock %}
