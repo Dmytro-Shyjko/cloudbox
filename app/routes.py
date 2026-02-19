@@ -4,7 +4,7 @@ import mimetypes
 
 from flask import (
     Blueprint, render_template, session, redirect, url_for,
-    request, current_app, send_from_directory, abort
+    request, current_app, send_from_directory, abort, jsonify
 )
 from werkzeug.utils import secure_filename
 
@@ -34,6 +34,13 @@ def user_base_dir() -> Path:
     p = base / uid
     p.mkdir(parents=True, exist_ok=True)
     return p
+
+def current_request_id() -> str:
+    return (
+        request.headers.get("X-Request-ID")
+        or request.headers.get("X-Correlation-ID")
+        or "-"
+    )
 
 def safe_rel_path(rel: str) -> str:
     """
@@ -230,7 +237,7 @@ def files():
 
     current_dir.mkdir(parents=True, exist_ok=True)
 
-    error = None
+    error = request.args.get("err") or None
     message = request.args.get("msg") or None
 
     # POST actions: upload OR create_folder
@@ -447,6 +454,17 @@ def files():
                                             f.save(dest)
                                             message = _t(lang, "msg.uploaded", filename=filename)
 
+        params = {
+            "path": rel,
+            "sort": sort_by,
+            "order": order,
+        }
+        if message:
+            params["msg"] = message
+        if error:
+            params["err"] = error
+        return redirect(url_for("main.files", **params))
+
 
     # LIST folders/files (with size/date)
     folders_list = []
@@ -547,25 +565,59 @@ def download(filepath):
 @login_required
 def delete_file(filepath):
     lang = get_lang(session)
-    # after delete, redirect back to folder
-    back_path = request.args.get("path", "")
+    # only allow explicit AJAX calls (prevents browser form-resubmit delete replay)
+    if request.headers.get("X-Requested-With") != "XMLHttpRequest":
+        return jsonify({"ok": False, "error": "ajax_required"}), 400
+
+    payload = request.get_json(silent=True) or {}
+    back_path = payload.get("path", "")
+    requested_name = safe_filename(payload.get("filename") or "")
+    request_id = current_request_id()
     try:
         back_rel = safe_rel_path(back_path)
     except ValueError:
-        back_rel = ""
+        return jsonify({"ok": False, "error": "bad_path"}), 400
 
     try:
         filepath = safe_rel_path(filepath)
         abs_path = resolve_user_path(filepath)
     except ValueError:
-        return redirect(url_for("main.files", path=back_rel))
+        return jsonify({"ok": False, "error": "bad_path"}), 400
+
+    resolved_rel = abs_path.relative_to(user_base_dir().resolve()).as_posix()
+    resolved_parent = abs_path.parent.relative_to(user_base_dir().resolve()).as_posix()
+    resolved_parent = "" if resolved_parent == "." else resolved_parent
+
+    if requested_name != abs_path.name or resolved_parent != back_rel:
+        current_app.logger.warning(
+            "delete_rejected_mismatch user_id=%s request_id=%s filepath=%s back_rel=%s requested_name=%s",
+            session.get("user_id"),
+            request_id,
+            resolved_rel,
+            back_rel,
+            requested_name,
+        )
+        return jsonify({"ok": False, "error": "mismatch"}), 400
 
     if abs_path.exists() and abs_path.is_file():
         abs_path.unlink()
         msg = _t(lang, "msg.deleted", filename=abs_path.name)
-        return redirect(url_for("main.files", path=back_rel, msg=msg))
+        redirect_url = url_for("main.files", path=back_rel, msg=msg)
+        current_app.logger.info(
+            "delete_ok user_id=%s request_id=%s filepath=%s",
+            session.get("user_id"),
+            request_id,
+            resolved_rel,
+        )
+        return jsonify({"ok": True, "redirect": redirect_url})
 
-    return redirect(url_for("main.files", path=back_rel))
+    current_app.logger.warning(
+        "delete_missing user_id=%s request_id=%s filepath=%s",
+        session.get("user_id"),
+        request_id,
+        resolved_rel,
+    )
+    return jsonify({"ok": False, "error": "not_found"}), 404
 
 @main_bp.post("/delete-folder/<path:folder>")
 @login_required
