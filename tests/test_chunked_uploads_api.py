@@ -24,6 +24,22 @@ def _csrf_from_page(client, path="/login"):
 	return match.group(1)
 
 
+def _create_upload(client, csrf, total_size=3072, chunk_size=1024, total_chunks=3):
+	resp = client.post(
+		"/api/uploads/init",
+		json={
+			"filename": "chunk.bin",
+			"total_size": total_size,
+			"chunk_size": chunk_size,
+			"total_chunks": total_chunks,
+			"target_path": "",
+		},
+		headers={"X-CSRFToken": csrf},
+	)
+	assert resp.status_code == 200
+	return resp.get_json()["upload_id"]
+
+
 def test_init_creates_upload_row_and_tmp_dir(client, db, app):
 	_insert_user(db)
 	_set_logged_in(client)
@@ -114,6 +130,147 @@ def test_status_returns_full_missing_range_when_no_chunks(client, db):
 	assert payload["missing_chunks"] == [0, 1, 2]
 
 
+def test_upload_chunk_happy_path(client, db, app):
+	_insert_user(db)
+	_set_logged_in(client)
+	csrf = _csrf_from_page(client)
+	upload_id = _create_upload(client, csrf)
+
+	chunk = b"a" * 1024
+	resp = client.post(
+		f"/api/uploads/{upload_id}/chunk",
+		data=chunk,
+		headers={
+			"Content-Type": "application/octet-stream",
+			"X-Chunk-Index": "0",
+			"X-Chunk-Size": str(len(chunk)),
+			"X-CSRFToken": csrf,
+		},
+	)
+	assert resp.status_code == 200
+	payload = resp.get_json()
+	assert payload == {"ok": True, "upload_id": upload_id, "chunk_index": 0, "received": 1024}
+
+	chunk_path = Path(app.config["UPLOAD_TMP_DIR_ABS"]) / "1" / upload_id / "chunks" / "0.part"
+	assert chunk_path.exists()
+	assert chunk_path.read_bytes() == chunk
+
+	rows = db("SELECT chunk_index, size FROM upload_chunks WHERE upload_id = ?", (upload_id,))
+	assert len(rows) == 1
+	assert rows[0]["chunk_index"] == 0
+	assert rows[0]["size"] == 1024
+
+	upload_rows = db("SELECT status FROM uploads WHERE id = ?", (upload_id,))
+	assert upload_rows[0]["status"] == "uploading"
+
+
+def test_upload_chunk_idempotent(client, db):
+	_insert_user(db)
+	_set_logged_in(client)
+	csrf = _csrf_from_page(client)
+	upload_id = _create_upload(client, csrf)
+
+	chunk = b"b" * 1024
+	headers = {
+		"Content-Type": "application/octet-stream",
+		"X-Chunk-Index": "0",
+		"X-Chunk-Size": str(len(chunk)),
+		"X-CSRFToken": csrf,
+	}
+	resp_first = client.post(f"/api/uploads/{upload_id}/chunk", data=chunk, headers=headers)
+	assert resp_first.status_code == 200
+	resp_second = client.post(f"/api/uploads/{upload_id}/chunk", data=chunk, headers=headers)
+	assert resp_second.status_code == 200
+
+	rows = db("SELECT COUNT(*) AS c FROM upload_chunks WHERE upload_id = ?", (upload_id,))
+	assert rows[0]["c"] == 1
+
+
+def test_upload_chunk_rejects_out_of_range_index(client, db):
+	_insert_user(db)
+	_set_logged_in(client)
+	csrf = _csrf_from_page(client)
+	upload_id = _create_upload(client, csrf)
+
+	resp = client.post(
+		f"/api/uploads/{upload_id}/chunk",
+		data=b"x" * 1024,
+		headers={
+			"Content-Type": "application/octet-stream",
+			"X-Chunk-Index": "5",
+			"X-CSRFToken": csrf,
+		},
+	)
+	assert resp.status_code == 400
+
+
+def test_upload_chunk_rejects_wrong_owner(client, db):
+	_insert_user(db, 1, "owner")
+	_insert_user(db, 2, "other")
+	_set_logged_in(client, 1, "owner")
+	csrf_owner = _csrf_from_page(client)
+	upload_id = _create_upload(client, csrf_owner)
+
+	_set_logged_in(client, 2, "other")
+	csrf_other = _csrf_from_page(client)
+	resp = client.post(
+		f"/api/uploads/{upload_id}/chunk",
+		data=b"x" * 1024,
+		headers={
+			"Content-Type": "application/octet-stream",
+			"X-Chunk-Index": "0",
+			"X-CSRFToken": csrf_other,
+		},
+	)
+	assert resp.status_code == 404
+
+
+def test_upload_chunk_rejects_after_cancel(client, db):
+	_insert_user(db)
+	_set_logged_in(client)
+	csrf = _csrf_from_page(client)
+	upload_id = _create_upload(client, csrf)
+
+	cancel_resp = client.post(f"/api/uploads/{upload_id}/cancel", headers={"X-CSRFToken": csrf})
+	assert cancel_resp.status_code == 200
+
+	resp = client.post(
+		f"/api/uploads/{upload_id}/chunk",
+		data=b"x" * 1024,
+		headers={
+			"Content-Type": "application/octet-stream",
+			"X-Chunk-Index": "0",
+			"X-CSRFToken": csrf,
+		},
+	)
+	assert resp.status_code == 409
+
+
+def test_status_reflects_uploaded_chunks(client, db):
+	_insert_user(db)
+	_set_logged_in(client)
+	csrf = _csrf_from_page(client)
+	upload_id = _create_upload(client, csrf)
+
+	chunk_resp = client.post(
+		f"/api/uploads/{upload_id}/chunk",
+		data=b"z" * 1024,
+		headers={
+			"Content-Type": "application/octet-stream",
+			"X-Chunk-Index": "0",
+			"X-CSRFToken": csrf,
+		},
+	)
+	assert chunk_resp.status_code == 200
+
+	status_resp = client.get(f"/api/uploads/{upload_id}/status")
+	assert status_resp.status_code == 200
+	payload = status_resp.get_json()
+	assert payload["uploaded_chunks"] == [0]
+	assert 0 not in payload["missing_chunks"]
+	assert payload["missing_chunks"] == [1, 2]
+
+
 def test_cancel_updates_status_and_removes_tmp_dir(client, db, app):
 	_insert_user(db)
 	_set_logged_in(client)
@@ -166,14 +323,25 @@ def test_csrf_header_required_for_post_endpoints(client, db):
 	assert resp.status_code in (400, 403)
 
 	csrf = _csrf_from_page(client)
-	resp_ok = client.post(
-		"/api/uploads/init",
-		json={
-			"filename": "with-csrf.txt",
-			"total_size": 4,
-			"chunk_size": 2,
-			"target_path": "",
+	upload_id = _create_upload(client, csrf, total_size=4, chunk_size=2, total_chunks=2)
+
+	resp_chunk_missing_csrf = client.post(
+		f"/api/uploads/{upload_id}/chunk",
+		data=b"ab",
+		headers={
+			"Content-Type": "application/octet-stream",
+			"X-Chunk-Index": "0",
 		},
-		headers={"X-CSRFToken": csrf},
+	)
+	assert resp_chunk_missing_csrf.status_code in (400, 403)
+
+	resp_ok = client.post(
+		f"/api/uploads/{upload_id}/chunk",
+		data=b"ab",
+		headers={
+			"Content-Type": "application/octet-stream",
+			"X-Chunk-Index": "0",
+			"X-CSRFToken": csrf,
+		},
 	)
 	assert resp_ok.status_code == 200

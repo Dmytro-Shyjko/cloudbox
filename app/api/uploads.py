@@ -1,5 +1,8 @@
 import math
+import hashlib
+import os
 import re
+import sqlite3
 import shutil
 import uuid
 from datetime import datetime, timedelta, timezone
@@ -65,6 +68,15 @@ def _to_iso8601(value: str | None) -> str | None:
 		except ValueError:
 			continue
 	return value
+
+
+def _is_chunk_path_safe(chunk_dir: Path, chunk_file: Path) -> bool:
+	try:
+		base_resolved = chunk_dir.resolve(strict=False)
+		file_resolved = chunk_file.resolve(strict=False)
+		return os.path.commonpath([str(base_resolved), str(file_resolved)]) == str(base_resolved)
+	except (OSError, ValueError):
+		return False
 
 
 @uploads_api_bp.post("/init")
@@ -227,6 +239,158 @@ def upload_status(upload_id: str):
 			"expires_at": _to_iso8601(upload_row["expires_at"]),
 		}
 	)
+
+
+@uploads_api_bp.post("/<upload_id>/chunk")
+def upload_chunk(upload_id: str):
+	user_id, auth_error = _api_login_required()
+	if auth_error:
+		return auth_error
+
+	chunk_index_raw = (request.headers.get("X-Chunk-Index") or "").strip()
+	if not chunk_index_raw:
+		return _json_error("X-Chunk-Index header is required")
+	try:
+		chunk_index = int(chunk_index_raw)
+	except ValueError:
+		return _json_error("X-Chunk-Index must be an integer")
+
+	chunk_size_header = request.headers.get("X-Chunk-Size")
+	if chunk_size_header is not None and chunk_size_header.strip() != "":
+		try:
+			expected_size = int(chunk_size_header.strip())
+		except ValueError:
+			return _json_error("X-Chunk-Size must be an integer")
+		if expected_size < 0:
+			return _json_error("X-Chunk-Size must be non-negative")
+	else:
+		expected_size = None
+
+	chunk_sha256_header = (request.headers.get("X-Chunk-SHA256") or "").strip().lower()
+	if chunk_sha256_header and not validate_hex_sha256(chunk_sha256_header):
+		return _json_error("X-Chunk-SHA256 must be a 64-character hex value")
+
+	content_type = (request.content_type or "").split(";")[0].strip().lower()
+	if content_type != "application/octet-stream":
+		return _json_error("Content-Type must be application/octet-stream")
+
+	body = request.get_data(cache=False, as_text=False)
+	received_size = len(body)
+	if received_size <= 0:
+		return _json_error("chunk body must be greater than 0")
+
+	chunk_size_max = int(current_app.config["CHUNK_SIZE_MAX_MB"]) * 1024 * 1024
+	if received_size > chunk_size_max:
+		return _json_error("chunk body exceeds maximum allowed size")
+
+	if expected_size is not None and expected_size != received_size:
+		return _json_error("X-Chunk-Size does not match received bytes")
+
+	if chunk_sha256_header:
+		chunk_sha256 = hashlib.sha256(body).hexdigest()
+		if chunk_sha256 != chunk_sha256_header:
+			return _json_error("chunk sha256 mismatch")
+	else:
+		chunk_sha256 = hashlib.sha256(body).hexdigest()
+
+	now_db = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+	with get_db(current_app) as conn:
+		upload_row = conn.execute(
+			"""
+			SELECT id, status, chunk_size, total_chunks, total_size
+			FROM uploads
+			WHERE id = ? AND user_id = ?
+			""",
+			(upload_id, user_id),
+		).fetchone()
+		if not upload_row:
+			return _json_error("upload not found", 404)
+
+		status = upload_row["status"]
+		if status not in ("initiated", "uploading"):
+			return _json_error("upload status does not allow chunk writes", 409)
+
+		total_chunks = int(upload_row["total_chunks"])
+		if chunk_index < 0 or chunk_index >= total_chunks:
+			return _json_error("X-Chunk-Index out of range")
+
+		declared_chunk_size = int(upload_row["chunk_size"])
+		if chunk_index < (total_chunks - 1) and received_size != declared_chunk_size:
+			return _json_error("non-last chunk size must match upload chunk_size")
+
+		if chunk_index == (total_chunks - 1) and received_size > declared_chunk_size:
+			return _json_error("last chunk size cannot exceed upload chunk_size")
+
+		chunk_dir = resolve_chunk_upload_dir(user_id, upload_id)
+		chunk_file = chunk_dir / f"{chunk_index}.part"
+		tmp_file = chunk_dir / f"{chunk_index}.part.tmp"
+		if not _is_chunk_path_safe(chunk_dir, chunk_file) or not _is_chunk_path_safe(chunk_dir, tmp_file):
+			return _json_error("invalid chunk path", 400)
+
+		chunk_dir.mkdir(parents=True, exist_ok=True)
+		existing_row = conn.execute(
+			"SELECT id, size FROM upload_chunks WHERE upload_id = ? AND chunk_index = ?",
+			(upload_id, chunk_index),
+		).fetchone()
+		chunk_exists = chunk_file.exists()
+		if existing_row and chunk_exists:
+			existing_size = chunk_file.stat().st_size
+			if int(existing_row["size"]) == received_size and existing_size == received_size:
+				conn.execute(
+					"UPDATE uploads SET last_activity_at = ?, updated_at = ? WHERE id = ?",
+					(now_db, now_db, upload_id),
+				)
+				conn.commit()
+				return jsonify({"ok": True, "upload_id": upload_id, "chunk_index": chunk_index, "received": received_size})
+			return _json_error("chunk already exists with different metadata", 409)
+		if existing_row or chunk_exists:
+			return _json_error("chunk already exists with inconsistent state", 409)
+
+		try:
+			with tmp_file.open("wb") as fh:
+				fh.write(body)
+			os.replace(tmp_file, chunk_file)
+		except OSError:
+			if tmp_file.exists():
+				tmp_file.unlink(missing_ok=True)
+			return _json_error("failed to persist chunk", 500)
+
+		try:
+			conn.execute(
+				"""
+				INSERT INTO upload_chunks (upload_id, chunk_index, size, sha256)
+				VALUES (?, ?, ?, ?)
+				""",
+				(upload_id, chunk_index, received_size, chunk_sha256),
+			)
+		except sqlite3.IntegrityError as exc:
+			if "UNIQUE constraint failed" in str(exc):
+				existing_row = conn.execute(
+					"SELECT id, size FROM upload_chunks WHERE upload_id = ? AND chunk_index = ?",
+					(upload_id, chunk_index),
+				).fetchone()
+				if existing_row and chunk_file.exists() and int(existing_row["size"]) == chunk_file.stat().st_size:
+					conn.execute(
+						"UPDATE uploads SET last_activity_at = ?, updated_at = ? WHERE id = ?",
+						(now_db, now_db, upload_id),
+					)
+					conn.commit()
+					return jsonify({"ok": True, "upload_id": upload_id, "chunk_index": chunk_index, "received": received_size})
+			return _json_error("chunk already exists", 409)
+
+		if status == "initiated":
+			conn.execute(
+				"UPDATE uploads SET status = 'uploading', updated_at = ?, last_activity_at = ? WHERE id = ?",
+				(now_db, now_db, upload_id),
+			)
+		else:
+			conn.execute(
+				"UPDATE uploads SET updated_at = ?, last_activity_at = ? WHERE id = ?",
+				(now_db, now_db, upload_id),
+			)
+		conn.commit()
+
+	return jsonify({"ok": True, "upload_id": upload_id, "chunk_index": chunk_index, "received": received_size})
 
 
 @uploads_api_bp.post("/<upload_id>/cancel")
