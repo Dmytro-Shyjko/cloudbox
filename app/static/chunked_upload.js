@@ -7,8 +7,9 @@
 	const uploadForm = uploadRoot.querySelector('[data-upload-form]');
 	const fileInput = uploadRoot.querySelector('[data-upload-file]');
 	const submitButton = uploadRoot.querySelector('[data-upload-submit]');
-	const modal = document.getElementById('chunked-upload-modal');
-	if (!uploadForm || !fileInput || !submitButton || !modal) {
+	const overlay = document.getElementById('chunk-modal-overlay');
+	const modal = document.getElementById('chunk-modal');
+	if (!uploadForm || !fileInput || !submitButton || !overlay || !modal) {
 		return;
 	}
 
@@ -21,7 +22,10 @@
 	const pauseBtn = modal.querySelector('[data-cu-pause]');
 	const resumeBtn = modal.querySelector('[data-cu-resume]');
 	const cancelBtn = modal.querySelector('[data-cu-cancel]');
-	const closeBtn = modal.querySelector('[data-cu-close]');
+	const closeBtn = document.getElementById('chunk-modal-close');
+	if (!detailsFilename || !detailsSize || !detailsProgress || !detailsChunks || !detailsStatus || !progressBar || !pauseBtn || !resumeBtn || !cancelBtn || !closeBtn) {
+		return;
+	}
 
 	const thresholdBytes = Number(uploadRoot.dataset.chunkedThresholdBytes || 20 * 1024 * 1024);
 	const defaultChunkSize = 5 * 1024 * 1024;
@@ -75,12 +79,47 @@
 		detailsStatus.textContent = message;
 	}
 
-	function showModal() {
-		modal.hidden = false;
+	function resetModalUI() {
+		detailsFilename.textContent = '-';
+		detailsSize.textContent = '0 B';
+		detailsProgress.textContent = '0%';
+		detailsChunks.textContent = '0 / 0';
+		progressBar.style.width = '0%';
+		setStatus('Waiting...');
+		setButtonsForStatus('idle');
 	}
 
-	function hideModal() {
-		modal.hidden = true;
+	function hasValidFile(file) {
+		return !!file && Number.isFinite(file.size) && file.size > 0;
+	}
+
+	function isModalVisible() {
+		return !overlay.classList.contains('hidden');
+	}
+
+	function hideModal(options) {
+		const opts = Object.assign({ reset: false }, options || {});
+		overlay.classList.add('hidden');
+		if (opts.reset) {
+			resetModalUI();
+		}
+	}
+
+	function showModal(file) {
+		if (!hasValidFile(file)) {
+			hideModal({ reset: true });
+			return;
+		}
+		overlay.classList.remove('hidden');
+	}
+
+	function ensureValidVisibleModalState() {
+		if (!isModalVisible()) {
+			return;
+		}
+		if (!state.file || state.file.size <= 0 || state.totalChunks <= 0) {
+			hideModal({ reset: true });
+		}
 	}
 
 	function setSubmitDisabled(disabled) {
@@ -97,6 +136,7 @@
 		state.fingerprint = null;
 		state.totalChunks = 0;
 		state.uploadedCount = 0;
+		ensureValidVisibleModalState();
 	}
 
 	function getSuccessNavigationUrl() {
@@ -228,13 +268,13 @@
 		clearSelectionAndState();
 		setSubmitDisabled(false);
 		setTimeout(function () {
-			hideModal();
+			hideModal({ reset: true });
 			window.location.assign(getSuccessNavigationUrl());
 		}, 600);
 	}
 
 	async function runChunkedUpload(file) {
-		if (state.isUploading) {
+		if (state.isUploading || !hasValidFile(file)) {
 			return;
 		}
 		state.isUploading = true;
@@ -244,7 +284,13 @@
 		state.totalChunks = Math.ceil(file.size / defaultChunkSize);
 		detailsFilename.textContent = file.name;
 		detailsSize.textContent = formatBytes(file.size);
-		showModal();
+		showModal(file);
+		ensureValidVisibleModalState();
+		if (!isModalVisible()) {
+			state.isUploading = false;
+			setSubmitDisabled(false);
+			return;
+		}
 		setStatus('Preparing upload...');
 		setButtonsForStatus('uploading');
 
@@ -336,16 +382,13 @@
 		state.controller = null;
 		state.isUploading = false;
 		setSubmitDisabled(false);
-		hideModal();
+		hideModal({ reset: true });
 	}
 
 	fileInput.addEventListener('change', function () {
 		const file = fileInput.files && fileInput.files[0] ? fileInput.files[0] : null;
-		if (!file) {
-			return;
-		}
-		if (file.size <= thresholdBytes) {
-			hideModal();
+		if (!file || file.size <= thresholdBytes) {
+			hideModal({ reset: true });
 			return;
 		}
 		detailsFilename.textContent = file.name;
@@ -381,8 +424,21 @@
 	resumeBtn.addEventListener('click', resumeUpload);
 	cancelBtn.addEventListener('click', cancelUpload);
 	closeBtn.addEventListener('click', function () {
-		if (state.status === 'done' || state.status === 'idle') {
-			hideModal();
+		hideModal({ reset: true });
+	});
+	overlay.addEventListener('click', function (event) {
+		if (event.target === overlay) {
+			hideModal({ reset: true });
 		}
 	});
+	document.addEventListener('keydown', function (event) {
+		if (event.key === 'Escape' && isModalVisible()) {
+			hideModal({ reset: true });
+		}
+	});
+	document.addEventListener('DOMContentLoaded', function () {
+		hideModal({ reset: true });
+	});
+
+	hideModal({ reset: true });
 })();
