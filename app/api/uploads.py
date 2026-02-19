@@ -79,6 +79,21 @@ def _is_chunk_path_safe(chunk_dir: Path, chunk_file: Path) -> bool:
 		return False
 
 
+def resolve_user_storage_base(user_id: int) -> Path:
+	return Path(current_app.root_path).parent / "storage" / str(int(user_id))
+
+
+def resolve_final_file_path(user_id: int, target_path: str, filename_final: str) -> Path:
+	base = resolve_user_storage_base(user_id)
+	target_rel = _normalize_target_path(target_path)
+	filename_clean = secure_filename(filename_final) or "file"
+	final_path = (base / target_rel / filename_clean).resolve()
+	base_resolved = base.resolve()
+	if os.path.commonpath([str(base_resolved), str(final_path)]) != str(base_resolved):
+		raise ValueError("invalid final path")
+	return final_path
+
+
 @uploads_api_bp.post("/init")
 def init_upload():
 	user_id, auth_error = _api_login_required()
@@ -428,3 +443,181 @@ def cancel_upload(upload_id: str):
 			current_app.logger.warning("Failed to remove upload temp dir %s: %s", chunk_dir, exc)
 
 	return jsonify({"ok": True, "status": "canceled"})
+
+
+@uploads_api_bp.post("/<upload_id>/complete")
+def complete_upload(upload_id: str):
+	user_id, auth_error = _api_login_required()
+	if auth_error:
+		return auth_error
+
+	now_db = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+	with get_db(current_app) as conn:
+		upload_row = conn.execute(
+			"""
+			SELECT id, status, total_chunks, target_path, filename_final
+			FROM uploads
+			WHERE id = ? AND user_id = ?
+			""",
+			(upload_id, user_id),
+		).fetchone()
+		if not upload_row:
+			return _json_error("upload not found", 404)
+
+		status = upload_row["status"]
+		if status == "assembling":
+			return _json_error("already assembling", 409)
+		if status not in ("initiated", "uploading"):
+			return _json_error("upload status does not allow completion", 409)
+
+		lock_result = conn.execute(
+			"""
+			UPDATE uploads
+			SET status = 'assembling', updated_at = ?, last_activity_at = ?
+			WHERE id = ? AND user_id = ? AND status IN ('initiated', 'uploading')
+			""",
+			(now_db, now_db, upload_id, user_id),
+		)
+		if lock_result.rowcount != 1:
+			current_row = conn.execute(
+				"SELECT status FROM uploads WHERE id = ? AND user_id = ?",
+				(upload_id, user_id),
+			).fetchone()
+			if current_row and current_row["status"] == "assembling":
+				return _json_error("already assembling", 409)
+			return _json_error("upload status does not allow completion", 409)
+
+		total_chunks = int(upload_row["total_chunks"])
+		chunk_rows = conn.execute(
+			"SELECT chunk_index FROM upload_chunks WHERE upload_id = ? ORDER BY chunk_index ASC",
+			(upload_id,),
+		).fetchall()
+		uploaded_indices = [int(row["chunk_index"]) for row in chunk_rows]
+		missing_chunks = compute_missing_chunks(total_chunks, uploaded_indices)
+
+		chunk_dir = resolve_chunk_upload_dir(user_id, upload_id)
+		for idx in range(total_chunks):
+			chunk_file = chunk_dir / f"{idx}.part"
+			if not chunk_file.exists():
+				missing_chunks.append(idx)
+
+		missing_chunks = sorted(set(missing_chunks))
+		if len(chunk_rows) != total_chunks or missing_chunks:
+			conn.execute(
+				"UPDATE uploads SET status = ?, updated_at = ?, last_activity_at = ? WHERE id = ?",
+				(status, now_db, now_db, upload_id),
+			)
+			conn.commit()
+			return (
+				jsonify(
+					{
+						"ok": False,
+						"status": status,
+						"missing_chunks": missing_chunks,
+						"error": "missing_chunks",
+					}
+				),
+				409,
+			)
+
+		try:
+			final_path = resolve_final_file_path(
+				user_id=user_id,
+				target_path=upload_row["target_path"] or "",
+				filename_final=upload_row["filename_final"],
+			)
+		except ValueError:
+			conn.execute(
+				"UPDATE uploads SET status = 'failed', updated_at = ?, last_activity_at = ? WHERE id = ?",
+				(now_db, now_db, upload_id),
+			)
+			conn.commit()
+			return _json_error("invalid target_path", 400)
+
+		final_path.parent.mkdir(parents=True, exist_ok=True)
+		temp_final = final_path.with_name(f"{final_path.name}.uploading")
+		hasher = hashlib.sha256()
+		size_written = 0
+
+		try:
+			with temp_final.open("wb") as dest:
+				for idx in range(total_chunks):
+					chunk_file = chunk_dir / f"{idx}.part"
+					with chunk_file.open("rb") as src:
+						while True:
+							block = src.read(1024 * 1024)
+							if not block:
+								break
+							dest.write(block)
+							hasher.update(block)
+							size_written += len(block)
+				dest.flush()
+				os.fsync(dest.fileno())
+
+			os.replace(temp_final, final_path)
+			sha256_final = hasher.hexdigest()
+
+			existing_file = conn.execute(
+				"SELECT id FROM user_files WHERE user_id = ? AND sha256 = ? ORDER BY id ASC LIMIT 1",
+				(user_id, sha256_final),
+			).fetchone()
+
+			if existing_file:
+				final_path.unlink(missing_ok=True)
+				file_id = int(existing_file["id"])
+				duplicate = True
+			else:
+				insert_result = conn.execute(
+					"""
+					INSERT INTO user_files (user_id, path, filename, size, sha256, created_at, updated_at)
+					VALUES (?, ?, ?, ?, ?, ?, ?)
+					""",
+					(
+						user_id,
+						upload_row["target_path"] or "",
+						upload_row["filename_final"],
+						size_written,
+						sha256_final,
+						now_db,
+						now_db,
+					),
+				)
+				file_id = int(insert_result.lastrowid)
+				duplicate = False
+
+			conn.execute(
+				"""
+				UPDATE uploads
+				SET status = 'completed', sha256_final = ?, updated_at = ?, last_activity_at = ?
+				WHERE id = ?
+				""",
+				(sha256_final, now_db, now_db, upload_id),
+			)
+			conn.commit()
+
+		except OSError as exc:
+			temp_final.unlink(missing_ok=True)
+			conn.execute(
+				"UPDATE uploads SET status = 'failed', updated_at = ?, last_activity_at = ? WHERE id = ?",
+				(now_db, now_db, upload_id),
+			)
+			conn.commit()
+			current_app.logger.exception("Failed to assemble upload %s: %s", upload_id, exc)
+			return _json_error("failed to assemble upload", 500)
+
+	upload_root_dir = resolve_chunk_upload_dir(user_id, upload_id).parent
+	if upload_root_dir.exists():
+		try:
+			shutil.rmtree(upload_root_dir)
+		except OSError as exc:
+			current_app.logger.warning("Failed to remove upload temp dir %s: %s", upload_root_dir, exc)
+
+	return jsonify(
+		{
+			"ok": True,
+			"status": "completed",
+			"file_id": str(file_id),
+			"sha256": sha256_final,
+			"duplicate": duplicate,
+		}
+	)

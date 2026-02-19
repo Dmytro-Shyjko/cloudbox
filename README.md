@@ -18,10 +18,11 @@
 
 ## Chunked upload foundation (backend only)
 - Added config + DB foundation and API skeleton routes for resumable/chunked uploads.
-- API now includes `POST /api/uploads/init`, `POST /api/uploads/<upload_id>/chunk`, `GET /api/uploads/<upload_id>/status`, and `POST /api/uploads/<upload_id>/cancel`.
-- `/chunk` upload is implemented for raw octet-stream chunk writes with DB tracking; `/complete` assembly is still intentionally not implemented.
+- API now includes `POST /api/uploads/init`, `POST /api/uploads/<upload_id>/chunk`, `GET /api/uploads/<upload_id>/status`, `POST /api/uploads/<upload_id>/complete`, and `POST /api/uploads/<upload_id>/cancel`.
+- `/chunk` upload is implemented for raw octet-stream chunk writes with DB tracking; `/complete` now verifies all chunk metadata/files, assembles atomically, computes server-side sha256, and performs duplicate detection by `(user_id, sha256)`.
 - Temporary chunks directory is configured via `UPLOAD_TMP_DIR` and created on app startup.
 - Cleanup/resume metadata is stored in `uploads` and `upload_chunks` tables with TTL controls (`UPLOAD_TTL_HOURS`).
+- `POST /api/uploads/<upload_id>/complete` returns `duplicate: false` when a new file is stored, or `duplicate: true` with an existing `file_id` when content already exists for that user.
 
 ## CSRF protection
 - CSRF is enabled globally via Flask-WTF (`CSRFProtect`) for POST endpoints.
