@@ -667,22 +667,82 @@ def complete_upload(upload_id: str):
 				sha256_final,
 			)
 
-			existing_file = conn.execute(
-				"SELECT id FROM user_files WHERE user_id = ? AND sha256 = ? ORDER BY id ASC LIMIT 1",
+			existing_rows = conn.execute(
+				"SELECT id, path, filename FROM user_files WHERE user_id = ? AND sha256 = ? ORDER BY id ASC",
 				(user_id, sha256_final),
-			).fetchone()
+			).fetchall()
+
+			existing_file = None
+			for existing_candidate in existing_rows:
+				candidate_path = existing_candidate["path"] or ""
+				candidate_filename = existing_candidate["filename"] or ""
+				try:
+					candidate_file_path = resolve_final_file_path(user_id, candidate_path, candidate_filename)
+				except ValueError:
+					current_app.logger.warning(
+						"COMPLETE request_id=%s decision=duplicate_ignored_stale user_id=%s upload_id=%s filename=%s path=%s sha256=%s stale_file_id=%s stale_reason=invalid_path",
+						request_id,
+						user_id,
+						upload_id,
+						upload_row["filename_final"],
+						upload_row["target_path"] or "",
+						sha256_final,
+						int(existing_candidate["id"]),
+					)
+					continue
+
+				if candidate_file_path.exists() and candidate_file_path.is_file():
+					existing_file = existing_candidate
+					break
+
+				current_app.logger.warning(
+					"COMPLETE request_id=%s decision=duplicate_ignored_stale user_id=%s upload_id=%s filename=%s path=%s sha256=%s stale_file_id=%s stale_file_path=%s stale_reason=missing_file",
+					request_id,
+					user_id,
+					upload_id,
+					upload_row["filename_final"],
+					upload_row["target_path"] or "",
+					sha256_final,
+					int(existing_candidate["id"]),
+					str(candidate_file_path.resolve(strict=False)),
+				)
 
 			if existing_file:
 				temp_final.unlink(missing_ok=True)
 				file_id = int(existing_file["id"])
 				duplicate = True
 				current_app.logger.info(
-					"Chunked upload duplicate detected; keeping existing file intact (upload_id=%s, existing_file_id=%s, deleted_new_path=%s)",
+					"COMPLETE request_id=%s decision=duplicate_used_existing user_id=%s upload_id=%s filename=%s path=%s sha256=%s existing_file_id=%s",
+					request_id,
+					user_id,
 					upload_id,
+					upload_row["filename_final"],
+					upload_row["target_path"] or "",
+					sha256_final,
 					file_id,
-					str(temp_final),
 				)
 			else:
+				if existing_rows:
+					current_app.logger.info(
+						"COMPLETE request_id=%s decision=duplicate_ignored_stale user_id=%s upload_id=%s filename=%s path=%s sha256=%s stale_candidates=%s",
+						request_id,
+						user_id,
+						upload_id,
+						upload_row["filename_final"],
+						upload_row["target_path"] or "",
+						sha256_final,
+						len(existing_rows),
+					)
+				else:
+					current_app.logger.info(
+						"COMPLETE request_id=%s decision=missing_file user_id=%s upload_id=%s filename=%s path=%s sha256=%s",
+						request_id,
+						user_id,
+						upload_id,
+						upload_row["filename_final"],
+						upload_row["target_path"] or "",
+						sha256_final,
+					)
 				try:
 					os.replace(temp_final, final_path)
 				except OSError as exc:

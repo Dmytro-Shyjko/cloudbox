@@ -538,6 +538,65 @@ def test_complete_duplicate_does_not_delete_existing_same_target_file(client, db
 	assert count_rows[0]["c"] == 1
 
 
+def test_delete_then_reupload_same_file_persists(client, db, app):
+	upload_id, csrf, content = _prepare_upload_for_complete(client, db)
+	first_complete = client.post(f"/api/uploads/{upload_id}/complete", headers={"X-CSRFToken": csrf})
+	assert first_complete.status_code == 200
+
+	delete_resp = client.post(
+		"/delete/chunk.bin",
+		json={"path": "", "filename": "chunk.bin"},
+		headers={
+			"X-CSRFToken": csrf,
+			"X-Requested-With": "XMLHttpRequest",
+		},
+	)
+	assert delete_resp.status_code == 200
+	assert delete_resp.get_json()["ok"] is True
+
+	rows_after_delete = db(
+		"SELECT COUNT(*) AS c FROM user_files WHERE user_id = ? AND path = ? AND filename = ?",
+		(1, "", "chunk.bin"),
+	)
+	assert rows_after_delete[0]["c"] == 0
+
+	second_upload_id = _create_upload(client, csrf, total_size=len(content), chunk_size=4, total_chunks=2)
+	for idx, chunk in enumerate((content[:4], content[4:])):
+		resp = _upload_chunk(client, second_upload_id, csrf, idx, chunk)
+		assert resp.status_code == 200
+
+	second_complete = client.post(f"/api/uploads/{second_upload_id}/complete", headers={"X-CSRFToken": csrf})
+	assert second_complete.status_code == 200
+	payload = second_complete.get_json()
+	assert payload["duplicate"] is False
+
+	final_path = Path(app.root_path).parent / "storage" / "1" / "chunk.bin"
+	assert final_path.exists()
+	assert final_path.read_bytes() == content
+
+
+def test_complete_ignores_stale_duplicate_db_row_when_file_missing(client, db, app):
+	upload_id, csrf, content = _prepare_upload_for_complete(client, db)
+	sha256_content = hashlib.sha256(content).hexdigest()
+
+	db(
+		"""
+		INSERT INTO user_files (user_id, path, filename, size, sha256)
+		VALUES (?, ?, ?, ?, ?)
+		""",
+		(1, "", "ghost.bin", len(content), sha256_content),
+	)
+
+	complete_resp = client.post(f"/api/uploads/{upload_id}/complete", headers={"X-CSRFToken": csrf})
+	assert complete_resp.status_code == 200
+	payload = complete_resp.get_json()
+	assert payload["duplicate"] is False
+
+	final_path = Path(app.root_path).parent / "storage" / "1" / "chunk.bin"
+	assert final_path.exists()
+	assert final_path.read_bytes() == content
+
+
 def test_complete_must_not_return_ok_if_replace_fails(client, db, monkeypatch):
 	upload_id, csrf, _ = _prepare_upload_for_complete(client, db)
 
