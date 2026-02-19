@@ -16,6 +16,12 @@
 - Default value is `1024` (MB).
 - Requests above this limit return HTTP `413 Request Entity Too Large` with a friendly page.
 
+## Chunked upload foundation (backend only)
+- Added only config + DB foundation for future resumable/chunked uploads.
+- No new upload API routes/UI are enabled yet.
+- Temporary chunks directory is configured via `UPLOAD_TMP_DIR` and created on app startup.
+- Cleanup/resume metadata is stored in `uploads` and `upload_chunks` tables with TTL controls (`UPLOAD_TTL_HOURS`).
+
 ## CSRF protection
 - CSRF is enabled globally via Flask-WTF (`CSRFProtect`) for POST endpoints.
 - All HTML `<form method="post">` include a CSRF token field.
