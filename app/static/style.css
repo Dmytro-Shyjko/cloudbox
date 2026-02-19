@@ -1072,6 +1072,10 @@ ul.file-list > li {
 	text-decoration: underline;
 }
 
+.hidden {
+	display: none !important;
+}
+
 .chunked-upload-modal {
 	position: fixed;
 	inset: 0;
@@ -1081,6 +1085,7 @@ ul.file-list > li {
 	justify-content: center;
 	z-index: 1200;
 	padding: 20px;
+	pointer-events: auto;
 }
 
 .chunked-upload-dialog {
@@ -1100,10 +1105,17 @@ ul.file-list > li {
 
 .chunked-upload-close {
 	border: none;
-	background: transparent;
+	background: #f3f4f6;
 	font-size: 22px;
 	line-height: 1;
 	cursor: pointer;
+	width: 34px;
+	height: 34px;
+	border-radius: 999px;
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	color: #111827;
 }
 
 .chunked-upload-progress-wrap {

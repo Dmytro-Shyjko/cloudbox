@@ -57,11 +57,11 @@
 	</form>
 </div>
 
-<div id="chunked-upload-modal" class="chunked-upload-modal" hidden>
-	<div class="chunked-upload-dialog card">
+<div id="chunk-modal-overlay" class="chunked-upload-modal hidden">
+	<div id="chunk-modal" class="chunked-upload-dialog card" role="dialog" aria-modal="true" aria-labelledby="chunk-modal-title">
 		<div class="chunked-upload-header">
-			<h3>Chunked upload</h3>
-			<button type="button" class="chunked-upload-close" data-cu-close>×</button>
+			<h3 id="chunk-modal-title">Chunked upload</h3>
+			<button type="button" id="chunk-modal-close" class="chunked-upload-close" data-cu-close aria-label="Close">×</button>
 		</div>
 		<div class="chunked-upload-body">
 			<p><b>File:</b> <span data-cu-filename>-</span></p>
