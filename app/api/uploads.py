@@ -535,7 +535,7 @@ def complete_upload(upload_id: str):
 			return _json_error("invalid target_path", 400)
 
 		final_path.parent.mkdir(parents=True, exist_ok=True)
-		temp_final = final_path.with_name(f"{final_path.name}.uploading")
+		temp_final = final_path.with_name(f"{final_path.name}.{upload_id}.uploading")
 		hasher = hashlib.sha256()
 		size_written = 0
 
@@ -554,7 +554,6 @@ def complete_upload(upload_id: str):
 				dest.flush()
 				os.fsync(dest.fileno())
 
-			os.replace(temp_final, final_path)
 			sha256_final = hasher.hexdigest()
 
 			existing_file = conn.execute(
@@ -563,10 +562,17 @@ def complete_upload(upload_id: str):
 			).fetchone()
 
 			if existing_file:
-				final_path.unlink(missing_ok=True)
+				temp_final.unlink(missing_ok=True)
 				file_id = int(existing_file["id"])
 				duplicate = True
+				current_app.logger.info(
+					"Chunked upload duplicate detected; keeping existing file intact (upload_id=%s, existing_file_id=%s, deleted_new_path=%s)",
+					upload_id,
+					file_id,
+					str(temp_final),
+				)
 			else:
+				os.replace(temp_final, final_path)
 				insert_result = conn.execute(
 					"""
 					INSERT INTO user_files (user_id, path, filename, size, sha256, created_at, updated_at)

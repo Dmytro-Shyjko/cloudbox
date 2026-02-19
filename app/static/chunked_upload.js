@@ -37,7 +37,7 @@
 		uploadedCount: 0,
 		status: 'idle',
 		controller: null,
-		running: false,
+		isUploading: false,
 	};
 
 	function readCsrfToken() {
@@ -81,6 +81,28 @@
 
 	function hideModal() {
 		modal.hidden = true;
+	}
+
+	function setSubmitDisabled(disabled) {
+		submitButton.disabled = disabled;
+	}
+
+	function clearSelectionAndState() {
+		if (state.file) {
+			localStorage.removeItem(localStorageKey(state.file));
+		}
+		fileInput.value = '';
+		state.file = null;
+		state.uploadId = null;
+		state.fingerprint = null;
+		state.totalChunks = 0;
+		state.uploadedCount = 0;
+	}
+
+	function getSuccessNavigationUrl() {
+		const url = new URL(window.location.href);
+		url.searchParams.set('uploaded', '1');
+		return `${url.pathname}${url.search}`;
 	}
 
 	function setButtonsForStatus(status) {
@@ -195,23 +217,28 @@
 	function markPaused() {
 		state.status = 'paused';
 		setButtonsForStatus('paused');
+		setSubmitDisabled(false);
 		setStatus('Upload paused. You can resume.');
 	}
 
-	function finishAndReload(message) {
+	function finishAndNavigate(message) {
 		state.status = 'done';
 		setButtonsForStatus('done');
 		setStatus(message);
+		clearSelectionAndState();
+		setSubmitDisabled(false);
 		setTimeout(function () {
-			window.location.reload();
-		}, 900);
+			hideModal();
+			window.location.assign(getSuccessNavigationUrl());
+		}, 600);
 	}
 
 	async function runChunkedUpload(file) {
-		if (state.running) {
+		if (state.isUploading) {
 			return;
 		}
-		state.running = true;
+		state.isUploading = true;
+		setSubmitDisabled(true);
 		state.file = file;
 		state.fingerprint = buildFingerprint(file);
 		state.totalChunks = Math.ceil(file.size / defaultChunkSize);
@@ -250,12 +277,11 @@
 			setStatus('Completing upload...');
 			setButtonsForStatus('completing');
 			const completePayload = await completeUpload(uploadId);
-			localStorage.removeItem(localStorageKey(file));
 			if (completePayload.duplicate) {
-				finishAndReload('File already exists, upload skipped.');
+				finishAndNavigate('File already exists. Upload skipped.');
 				return;
 			}
-			finishAndReload('Upload complete.');
+			finishAndNavigate('Upload complete.');
 		} catch (err) {
 			if (err && err.name === 'AbortError') {
 				markPaused();
@@ -263,13 +289,14 @@
 			}
 			state.status = 'error';
 			setButtonsForStatus('error');
+			setSubmitDisabled(false);
 			if (err && err.status === 409) {
 				setStatus('Chunk state mismatch. Press Resume to re-check status and continue.');
 			} else {
 				setStatus('Connection lost, you can resume.');
 			}
 		} finally {
-			state.running = false;
+			state.isUploading = false;
 		}
 	}
 
@@ -304,12 +331,11 @@
 				// ignore cancel errors in UI flow
 			}
 		}
-		if (state.file) {
-			localStorage.removeItem(localStorageKey(state.file));
-		}
-		state.uploadId = null;
-		state.file = null;
+		clearSelectionAndState();
 		state.status = 'idle';
+		state.controller = null;
+		state.isUploading = false;
+		setSubmitDisabled(false);
 		hideModal();
 	}
 
@@ -336,6 +362,18 @@
 			return;
 		}
 		event.preventDefault();
+		runChunkedUpload(file);
+	});
+
+	submitButton.addEventListener('click', function () {
+		if (state.isUploading) {
+			return;
+		}
+		const file = fileInput.files && fileInput.files[0] ? fileInput.files[0] : null;
+		if (!file || file.size <= thresholdBytes) {
+			uploadForm.requestSubmit();
+			return;
+		}
 		runChunkedUpload(file);
 	});
 
