@@ -14,7 +14,7 @@ from datetime import datetime
 
 import shutil
 
-from .models import touch_last_active
+from .models import get_db, touch_last_active
 
 main_bp = Blueprint("main", __name__)
 
@@ -637,6 +637,25 @@ def delete_file(filepath):
 
     if abs_path.exists() and abs_path.is_file():
         abs_path.unlink()
+        deleted_rows = 0
+        with get_db(current_app) as conn:
+            delete_result = conn.execute(
+                """
+                DELETE FROM user_files
+                WHERE user_id = ? AND path = ? AND filename = ?
+                """,
+                (int(user_id), resolved_parent, abs_path.name),
+            )
+            deleted_rows = int(delete_result.rowcount or 0)
+            conn.commit()
+        current_app.logger.info(
+            "DELETE request_id=%s decision=deleted_db_row user_id=%s filename=%s path=%s deleted_db_rows=%s",
+            request_id,
+            user_id,
+            abs_path.name,
+            resolved_parent,
+            deleted_rows,
+        )
         msg = _t(lang, "msg.deleted", filename=abs_path.name)
         redirect_url = url_for("main.files", path=back_rel, msg=msg)
         log_delete_attempt(
