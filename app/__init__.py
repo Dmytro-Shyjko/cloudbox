@@ -14,6 +14,30 @@ csrf = CSRFProtect()
 def create_app(test_config=None):
 	app = Flask(__name__, instance_relative_config=True)
 
+	def _positive_int_env(name: str, default: int) -> int:
+		raw_value = os.environ.get(name, str(default))
+		try:
+			value = int(raw_value)
+		except (TypeError, ValueError) as exc:
+			raise RuntimeError(f"{name} must be an integer greater than 0") from exc
+		if value <= 0:
+			raise RuntimeError(f"{name} must be greater than 0")
+		return value
+
+	def _resolve_upload_tmp_dir() -> str:
+		raw_dir = (os.environ.get("UPLOAD_TMP_DIR") or "instance/uploads_tmp").strip()
+		if not raw_dir:
+			raw_dir = "instance/uploads_tmp"
+
+		candidate = Path(raw_dir)
+		if ".." in candidate.parts:
+			raise RuntimeError("UPLOAD_TMP_DIR must not contain path traversal segments ('..')")
+
+		if candidate.is_absolute():
+			return str(candidate.resolve())
+
+		return str((Path(app.instance_path) / candidate).resolve())
+
 	def _upload_max_mb() -> int:
 		try:
 			value = int(os.environ.get("UPLOAD_MAX_MB", "1024"))
@@ -32,6 +56,13 @@ def create_app(test_config=None):
 	app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
 	app.config["DATABASE"] = str(Path(app.instance_path) / "cloudbox.sqlite3")
 	app.config["MAX_CONTENT_LENGTH"] = _upload_max_mb() * 1024 * 1024
+	app.config["CHUNK_SIZE_DEFAULT_MB"] = _positive_int_env("CHUNK_SIZE_DEFAULT_MB", 5)
+	app.config["CHUNK_SIZE_MAX_MB"] = _positive_int_env("CHUNK_SIZE_MAX_MB", 10)
+	if app.config["CHUNK_SIZE_DEFAULT_MB"] > app.config["CHUNK_SIZE_MAX_MB"]:
+		raise RuntimeError("CHUNK_SIZE_DEFAULT_MB must be less than or equal to CHUNK_SIZE_MAX_MB")
+	app.config["UPLOAD_TTL_HOURS"] = _positive_int_env("UPLOAD_TTL_HOURS", 24)
+	app.config["MAX_ACTIVE_UPLOADS_PER_USER"] = _positive_int_env("MAX_ACTIVE_UPLOADS_PER_USER", 3)
+	app.config["UPLOAD_TMP_DIR_ABS"] = _resolve_upload_tmp_dir()
 
 	# BETA
 	app.config["BETA_MAX_USERS"] = 50  # постав будь-яке число
@@ -69,6 +100,20 @@ def create_app(test_config=None):
 
 	# Ensure instance folder exists
 	Path(app.instance_path).mkdir(parents=True, exist_ok=True)
+
+	try:
+		Path(app.config["UPLOAD_TMP_DIR_ABS"]).mkdir(parents=True, exist_ok=True)
+	except OSError as exc:
+		env_name = (os.environ.get("ENV") or os.environ.get("FLASK_ENV") or "").strip().lower()
+		if env_name == "production":
+			raise RuntimeError(
+				f"Failed to create upload temp directory at {app.config['UPLOAD_TMP_DIR_ABS']}"
+			) from exc
+		app.logger.warning(
+			"Failed to create upload temp directory at %s: %s",
+			app.config["UPLOAD_TMP_DIR_ABS"],
+			exc,
+		)
 
 	# CSRF protection for all POST forms/endpoints.
 	csrf.init_app(app)

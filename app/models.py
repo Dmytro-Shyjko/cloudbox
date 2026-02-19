@@ -3,167 +3,255 @@ import time
 from typing import Optional, Tuple, Any
 from werkzeug.security import generate_password_hash, check_password_hash
 from pathlib import Path
-from pathlib import Path
 import shutil
+
+
+CHUNKED_UPLOADS_FOUNDATION_MIGRATION = "20260219_chunked_uploads_foundation"
+
 
 # -----------------------------
 # DB helpers
 # -----------------------------
-
 def _ensure_users_columns(conn: sqlite3.Connection) -> None:
-    """
-    Додає відсутні колонки у users, щоб БД могла "самолікуватись"
-    після змін схеми під час бети.
-    """
-    wanted = {
-        "role": "TEXT NOT NULL DEFAULT 'user'",
-        "is_premium": "INTEGER NOT NULL DEFAULT 0",
-        "is_active": "INTEGER NOT NULL DEFAULT 1",
+	"""
+	Додає відсутні колонки у users, щоб БД могла "самолікуватись"
+	після змін схеми під час бети.
+	"""
+	wanted = {
+		"role": "TEXT NOT NULL DEFAULT 'user'",
+		"is_premium": "INTEGER NOT NULL DEFAULT 0",
+		"is_active": "INTEGER NOT NULL DEFAULT 1",
+		"email": "TEXT",
+		"first_name": "TEXT",
+		"last_name": "TEXT",
+		"country": "TEXT",
+		"phone": "TEXT",
+		"accepted_terms_at": "INTEGER",
+		"email_verified": "INTEGER NOT NULL DEFAULT 0",
+		"email_verify_token": "TEXT",
+		"reset_token": "TEXT",
+		"reset_expires_at": "INTEGER",
+		"last_active_at": "INTEGER",
+	}
 
-        "email": "TEXT",
-        "first_name": "TEXT",
-        "last_name": "TEXT",
-        "country": "TEXT",
-        "phone": "TEXT",
+	cols = {row["name"] for row in conn.execute("PRAGMA table_info(users)").fetchall()}
+	for col, ddl in wanted.items():
+		if col not in cols:
+			conn.execute(f"ALTER TABLE users ADD COLUMN {col} {ddl}")
 
-        "accepted_terms_at": "INTEGER",
-        "email_verified": "INTEGER NOT NULL DEFAULT 0",
-        "email_verify_token": "TEXT",
 
-        "reset_token": "TEXT",
-        "reset_expires_at": "INTEGER",
+def _ensure_user_files_columns(conn: sqlite3.Connection) -> None:
+	cols = {row["name"] for row in conn.execute("PRAGMA table_info(user_files)").fetchall()}
+	if "size" not in cols:
+		conn.execute("ALTER TABLE user_files ADD COLUMN size INTEGER")
+	if "sha256" not in cols:
+		conn.execute("ALTER TABLE user_files ADD COLUMN sha256 TEXT")
 
-        # NEW: last activity timestamp (unix)
-        "last_active_at": "INTEGER",
-    }
 
-    cols = {row["name"] for row in conn.execute("PRAGMA table_info(users)").fetchall()}
-    for col, ddl in wanted.items():
-        if col not in cols:
-            conn.execute(f"ALTER TABLE users ADD COLUMN {col} {ddl}")
+def _apply_chunked_uploads_foundation_migration(conn: sqlite3.Connection) -> None:
+	conn.execute(
+		"""
+		CREATE TABLE IF NOT EXISTS uploads (
+			id TEXT PRIMARY KEY,
+			user_id INTEGER NOT NULL,
+			target_path TEXT,
+			filename_original TEXT NOT NULL,
+			filename_final TEXT,
+			total_size INTEGER NOT NULL,
+			chunk_size INTEGER NOT NULL,
+			total_chunks INTEGER NOT NULL,
+			status TEXT NOT NULL,
+			sha256_client TEXT,
+			sha256_final TEXT,
+			created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			expires_at DATETIME NOT NULL,
+			last_activity_at DATETIME NOT NULL,
+			FOREIGN KEY(user_id) REFERENCES users(id)
+		);
+		"""
+	)
+	conn.execute("CREATE INDEX IF NOT EXISTS idx_uploads_user_status ON uploads(user_id, status)")
+	conn.execute("CREATE INDEX IF NOT EXISTS idx_uploads_expires_at ON uploads(expires_at)")
+	conn.execute("CREATE INDEX IF NOT EXISTS idx_uploads_last_activity_at ON uploads(last_activity_at)")
+
+	conn.execute(
+		"""
+		CREATE TABLE IF NOT EXISTS upload_chunks (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			upload_id TEXT NOT NULL,
+			chunk_index INTEGER NOT NULL,
+			size INTEGER NOT NULL,
+			sha256 TEXT,
+			created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			FOREIGN KEY(upload_id) REFERENCES uploads(id) ON DELETE CASCADE,
+			UNIQUE(upload_id, chunk_index)
+		);
+		"""
+	)
+	conn.execute("CREATE INDEX IF NOT EXISTS idx_upload_chunks_upload_id ON upload_chunks(upload_id)")
+
+	conn.execute(
+		"""
+		CREATE TABLE IF NOT EXISTS user_files (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			user_id INTEGER NOT NULL,
+			path TEXT NOT NULL,
+			filename TEXT NOT NULL,
+			size INTEGER,
+			sha256 TEXT,
+			created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			FOREIGN KEY(user_id) REFERENCES users(id)
+		);
+		"""
+	)
+	_ensure_user_files_columns(conn)
+	conn.execute("CREATE INDEX IF NOT EXISTS idx_user_files_user_sha256 ON user_files(user_id, sha256)")
+
+
+def _ensure_schema_migrations(conn: sqlite3.Connection) -> None:
+	conn.execute(
+		"""
+		CREATE TABLE IF NOT EXISTS schema_migrations (
+			name TEXT PRIMARY KEY,
+			applied_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+		);
+		"""
+	)
+
+
+def _run_migrations(conn: sqlite3.Connection) -> None:
+	_ensure_schema_migrations(conn)
+	migration_names = {
+		row["name"]
+		for row in conn.execute("SELECT name FROM schema_migrations").fetchall()
+	}
+	if CHUNKED_UPLOADS_FOUNDATION_MIGRATION not in migration_names:
+		_apply_chunked_uploads_foundation_migration(conn)
+		conn.execute(
+			"INSERT INTO schema_migrations(name) VALUES (?)",
+			(CHUNKED_UPLOADS_FOUNDATION_MIGRATION,),
+		)
+
 
 def user_storage_used_bytes(app, user_id: int) -> int:
-    base = Path(app.root_path).parent / "storage" / str(int(user_id))
-    if not base.exists():
-        return 0
-    total = 0
-    for p in base.rglob("*"):
-        if p.is_file():
-            try:
-                total += p.stat().st_size
-            except OSError:
-                pass
-    return total
+	base = Path(app.root_path).parent / "storage" / str(int(user_id))
+	if not base.exists():
+		return 0
+	total = 0
+	for p in base.rglob("*"):
+		if p.is_file():
+			try:
+				total += p.stat().st_size
+			except OSError:
+				pass
+	return total
+
 
 def can_create_more_users(app) -> bool:
-    limit = int(app.config.get("BETA_MAX_USERS", 0))
-    if limit <= 0:
-        return True  # 0 або менше = без ліміту
+	limit = int(app.config.get("BETA_MAX_USERS", 0))
+	if limit <= 0:
+		return True  # 0 або менше = без ліміту
 
-    with get_db(app) as conn:
-        row = conn.execute("SELECT COUNT(*) AS c FROM users").fetchone()
-        return int(row["c"]) < limit
+	with get_db(app) as conn:
+		row = conn.execute("SELECT COUNT(*) AS c FROM users").fetchone()
+		return int(row["c"]) < limit
+
 
 def get_db(app):
-    db_path = app.config["DATABASE"]
-    conn = sqlite3.connect(db_path)
-    conn.row_factory = sqlite3.Row
-    return conn
+	db_path = app.config["DATABASE"]
+	conn = sqlite3.connect(db_path)
+	conn.row_factory = sqlite3.Row
+	conn.execute("PRAGMA foreign_keys = ON")
+	return conn
+
 
 def _now_ts() -> int:
-    return int(time.time())
+	return int(time.time())
 
-def _ensure_users_columns(conn: sqlite3.Connection) -> None:
-    cols = {row["name"] for row in conn.execute("PRAGMA table_info(users)").fetchall()}
-
-    if "last_active_at" not in cols:
-        conn.execute("ALTER TABLE users ADD COLUMN last_active_at INTEGER")
-
-    # (опційно) якщо захочеш IP
-    # if "last_active_ip" not in cols:
-    #     conn.execute("ALTER TABLE users ADD COLUMN last_active_ip TEXT")
 
 def init_db(app):
-    """
-    Must be called on app startup (and in tests fixtures).
-    Creates all required tables for register/login tests.
-    """
-    with get_db(app) as conn:
-        # users (schema aligned with what you posted)
-        conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS users (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                username TEXT UNIQUE NOT NULL,
-                password_hash TEXT NOT NULL,
-                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-                role TEXT NOT NULL DEFAULT 'user',
-                is_premium INTEGER NOT NULL DEFAULT 0,
-                is_active INTEGER NOT NULL DEFAULT 1,
+	"""
+	Must be called on app startup (and in tests fixtures).
+	Creates all required tables for register/login tests.
+	"""
+	with get_db(app) as conn:
+		# users (schema aligned with what you posted)
+		conn.execute(
+			"""
+			CREATE TABLE IF NOT EXISTS users (
+				id INTEGER PRIMARY KEY AUTOINCREMENT,
+				username TEXT UNIQUE NOT NULL,
+				password_hash TEXT NOT NULL,
+				created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+				role TEXT NOT NULL DEFAULT 'user',
+				is_premium INTEGER NOT NULL DEFAULT 0,
+				is_active INTEGER NOT NULL DEFAULT 1,
 
-                email TEXT,
-                first_name TEXT,
-                last_name TEXT,
-                country TEXT,
-                phone TEXT,
+				email TEXT,
+				first_name TEXT,
+				last_name TEXT,
+				country TEXT,
+				phone TEXT,
 
-                accepted_terms_at INTEGER,
-                email_verified INTEGER NOT NULL DEFAULT 0,
-                email_verify_token TEXT,
+				accepted_terms_at INTEGER,
+				email_verified INTEGER NOT NULL DEFAULT 0,
+				email_verify_token TEXT,
 
-                reset_token TEXT,
-                reset_expires_at INTEGER
-            );
-            """
-        )
+				reset_token TEXT,
+				reset_expires_at INTEGER
+			);
+			"""
+		)
 
-        _ensure_users_columns(conn)  
+		_ensure_users_columns(conn)
 
-        # unique email when not null (sqlite partial unique index)
-        conn.execute(
-            """
-            CREATE UNIQUE INDEX IF NOT EXISTS idx_users_email_unique
-            ON users(email)
-            WHERE email IS NOT NULL;
-            """
-        )
+		# unique email when not null (sqlite partial unique index)
+		conn.execute(
+			"""
+			CREATE UNIQUE INDEX IF NOT EXISTS idx_users_email_unique
+			ON users(email)
+			WHERE email IS NOT NULL;
+			"""
+		)
 
-        # login_attempts (required by login tests)
-        conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS login_attempts (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                ip TEXT NOT NULL,
-                username TEXT NOT NULL,
-                success INTEGER NOT NULL DEFAULT 0,
-                ts INTEGER NOT NULL
-            );
-            """
-        )
-        
-        conn.execute(
-            "CREATE INDEX IF NOT EXISTS idx_login_attempts_ip_ts ON login_attempts(ip, ts)"
-        )
-        conn.execute(
-            "CREATE INDEX IF NOT EXISTS idx_login_attempts_user_ts ON login_attempts(username, ts)"
-        )
+		# login_attempts (required by login tests)
+		conn.execute(
+			"""
+			CREATE TABLE IF NOT EXISTS login_attempts (
+				id INTEGER PRIMARY KEY AUTOINCREMENT,
+				ip TEXT NOT NULL,
+				username TEXT NOT NULL,
+				success INTEGER NOT NULL DEFAULT 0,
+				ts INTEGER NOT NULL
+			);
+			"""
+		)
+		conn.execute(
+			"CREATE INDEX IF NOT EXISTS idx_login_attempts_ip_ts ON login_attempts(ip, ts)"
+		)
+		conn.execute(
+			"CREATE INDEX IF NOT EXISTS idx_login_attempts_user_ts ON login_attempts(username, ts)"
+		)
 
-        # register_attempts (required by register rate-limit tests)
-        conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS register_attempts (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                ip TEXT NOT NULL,
-                success INTEGER NOT NULL DEFAULT 0,
-                ts INTEGER NOT NULL
-            );
-            """
-        )
-        conn.execute(
-            "CREATE INDEX IF NOT EXISTS idx_register_attempts_ip_ts ON register_attempts(ip, ts)"
-        )
+		# register_attempts (required by register rate-limit tests)
+		conn.execute(
+			"""
+			CREATE TABLE IF NOT EXISTS register_attempts (
+				id INTEGER PRIMARY KEY AUTOINCREMENT,
+				ip TEXT NOT NULL,
+				success INTEGER NOT NULL DEFAULT 0,
+				ts INTEGER NOT NULL
+			);
+			"""
+		)
+		conn.execute(
+			"CREATE INDEX IF NOT EXISTS idx_register_attempts_ip_ts ON register_attempts(ip, ts)"
+		)
 
-        conn.commit()
+		_run_migrations(conn)
+		conn.commit()
 
 
 def touch_user_activity(app, user_id: int) -> None:
