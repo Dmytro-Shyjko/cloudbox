@@ -379,6 +379,49 @@ def test_cancel_deletes_chunks_and_db_rows(client, db, app):
 	assert not temp_uploading.exists()
 
 
+def test_cancel_accepts_empty_post_without_json_body(client, db):
+	_insert_user(db)
+	_set_logged_in(client)
+	csrf = _csrf_from_page(client)
+	upload_id = _create_upload(client, csrf, total_size=6, chunk_size=3, total_chunks=2)
+
+	resp_cancel = client.post(f"/api/uploads/{upload_id}/cancel", headers={"X-CSRFToken": csrf})
+	assert resp_cancel.status_code == 200
+	payload = resp_cancel.get_json()
+	assert payload["ok"] is True
+	assert payload["status"] == "canceled"
+
+
+def test_cancel_is_idempotent_for_canceled_and_completed_uploads(client, db, app):
+	_insert_user(db)
+	_set_logged_in(client)
+	csrf = _csrf_from_page(client)
+	upload_id = _create_upload(client, csrf, total_size=8, chunk_size=4, total_chunks=2, filename="already.bin", target_path="docs")
+
+	first = client.post(f"/api/uploads/{upload_id}/cancel", headers={"X-CSRFToken": csrf})
+	assert first.status_code == 200
+	assert first.get_json()["status"] == "canceled"
+
+	second = client.post(f"/api/uploads/{upload_id}/cancel", headers={"X-CSRFToken": csrf})
+	assert second.status_code == 200
+	assert second.get_json()["status"] == "canceled"
+
+	upload_completed_id = _create_upload(client, csrf, total_size=8, chunk_size=4, total_chunks=2, filename="complete.bin", target_path="docs")
+	db("UPDATE uploads SET status = 'completed' WHERE id = ?", (upload_completed_id,))
+
+	storage_dir = Path(app.root_path).parent / "storage" / "1" / "docs"
+	storage_dir.mkdir(parents=True, exist_ok=True)
+	temp_uploading = storage_dir / f"complete.bin.{upload_completed_id}.uploading"
+	temp_uploading.write_bytes(b"partial")
+
+	completed_cancel = client.post(f"/api/uploads/{upload_completed_id}/cancel", headers={"X-CSRFToken": csrf})
+	assert completed_cancel.status_code == 200
+	assert completed_cancel.get_json() == {"ok": True, "status": "completed"}
+	assert not temp_uploading.exists()
+	status_rows = db("SELECT status FROM uploads WHERE id = ?", (upload_completed_id,))
+	assert status_rows[0]["status"] == "completed"
+
+
 def test_status_canceled_is_terminal(client, db):
 	_insert_user(db)
 	_set_logged_in(client)
@@ -442,6 +485,11 @@ def test_csrf_header_required_for_post_endpoints(client, db):
 		},
 	)
 	assert resp_ok.status_code == 200
+
+	resp_cancel_missing_csrf = client.post(f"/api/uploads/{upload_id}/cancel")
+	assert resp_cancel_missing_csrf.status_code == 400
+	payload = resp_cancel_missing_csrf.get_json()
+	assert payload["error"] in ("csrf_required", "csrf_invalid")
 
 
 def _upload_chunk(client, upload_id, csrf, chunk_index, chunk_data):
