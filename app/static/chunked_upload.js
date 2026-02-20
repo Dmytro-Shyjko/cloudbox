@@ -52,6 +52,8 @@
 		speedSamples: [],
 		retryText: '-',
 		lastError: '-',
+		cancelRequested: false,
+		cancelExecuted: false,
 	};
 
 	function ensureExtraDetails() {
@@ -202,9 +204,10 @@
 		const isPaused = status === 'paused';
 		const isDone = status === 'done';
 		const isActive = status === 'uploading' || status === 'completing' || status === 'resuming' || status === 'preparing';
+		const isCancelable = status === 'preparing' || status === 'uploading' || status === 'resuming';
 		pauseBtn.disabled = !isActive;
 		resumeBtn.disabled = !(isPaused || status === 'error');
-		cancelBtn.disabled = isDone;
+		cancelBtn.disabled = isDone || state.cancelExecuted || !isCancelable;
 	}
 
 	function updateProgress(uploadedCount, totalChunks) {
@@ -322,42 +325,8 @@
 		return payload;
 	}
 
-	async function checkExistingFile(file) {
-		const params = new URLSearchParams({
-			path: targetPath,
-			filename: file.name,
-		});
-		return jsonRequest(`/api/uploads/exists?${params.toString()}`, {
-			method: 'GET'
-		});
-	}
 
-	async function fetchStatus(uploadId) {
-		return jsonRequest(`/api/uploads/${encodeURIComponent(uploadId)}/status`, {
-			method: 'GET'
-		});
-	}
 
-	async function initUpload(file, overwrite) {
-		const totalChunks = Math.ceil(file.size / defaultChunkSize);
-		const payload = await jsonRequest('/api/uploads/init', {
-			method: 'POST',
-			headers: {
-				'Content-Type': 'application/json'
-			},
-			body: JSON.stringify({
-				filename: file.name,
-				total_size: file.size,
-				chunk_size: defaultChunkSize,
-				total_chunks: totalChunks,
-				target_path: targetPath,
-				overwrite: !!overwrite,
-			})
-		});
-		payload.overwrite = !!overwrite;
-		saveUploadState(file, payload);
-		return payload;
-	}
 
 	function getMissingChunksFromStatus(statusPayload, fallbackTotal) {
 		if (Array.isArray(statusPayload.missing_chunks)) {
@@ -381,15 +350,34 @@
 		return statusCode === 429 || statusCode >= 500;
 	}
 
-	function delay(ms) {
-		return new Promise(function (resolve) {
-			window.setTimeout(resolve, ms);
+
+	function delayWithSignal(ms, signal) {
+		return new Promise(function (resolve, reject) {
+			const timer = window.setTimeout(function () {
+				if (signal) {
+					signal.removeEventListener('abort', onAbort);
+				}
+				resolve();
+			}, ms);
+			function onAbort() {
+				window.clearTimeout(timer);
+				reject(new DOMException('Aborted', 'AbortError'));
+			}
+			if (signal) {
+				if (signal.aborted) {
+					onAbort();
+					return;
+				}
+				signal.addEventListener('abort', onAbort, { once: true });
+			}
 		});
 	}
 
-	async function uploadChunkWithRetry(uploadId, chunkIndex, chunkBlob) {
+	async function uploadChunkWithRetry(uploadId, chunkIndex, chunkBlob, signal) {
 		for (let attempt = 1; attempt <= retryDelaysMs.length; attempt += 1) {
-			state.controller = new AbortController();
+			if (state.cancelRequested) {
+				throw new DOMException('Aborted', 'AbortError');
+			}
 			try {
 				const response = await fetch(`/api/uploads/${encodeURIComponent(uploadId)}/chunk`, {
 					method: 'POST',
@@ -400,7 +388,7 @@
 						'X-Chunk-Size': String(chunkBlob.size),
 					},
 					body: chunkBlob,
-					signal: state.controller.signal,
+					signal: signal,
 				});
 				let payload = {};
 				try {
@@ -420,7 +408,7 @@
 					state.retryText = `Retry ${attempt + 1}/${retryDelaysMs.length}...`;
 					state.lastError = parseErrorMessage(error);
 					setExtraDetails();
-					await delay(retryDelaysMs[attempt - 1]);
+					await delayWithSignal(retryDelaysMs[attempt - 1], signal);
 					continue;
 				}
 				throw error;
@@ -432,7 +420,7 @@
 					state.retryText = `Retry ${attempt + 1}/${retryDelaysMs.length}...`;
 					state.lastError = parseErrorMessage(error);
 					setExtraDetails();
-					await delay(retryDelaysMs[attempt - 1]);
+					await delayWithSignal(retryDelaysMs[attempt - 1], signal);
 					continue;
 				}
 				throw error;
@@ -441,15 +429,6 @@
 		throw new Error('Chunk retries exhausted');
 	}
 
-	async function completeUpload(uploadId) {
-		return jsonRequest(`/api/uploads/${encodeURIComponent(uploadId)}/complete`, {
-			method: 'POST',
-			headers: {
-				'Content-Type': 'application/json'
-			},
-			body: JSON.stringify({}),
-		});
-	}
 
 	function markPaused() {
 		state.status = 'paused';
@@ -466,6 +445,17 @@
 		clearStoredState(state.file);
 	}
 
+	function markCanceled(message) {
+		state.status = 'canceled';
+		state.cancelExecuted = true;
+		setButtonsForStatus('done');
+		setSubmitDisabled(false);
+		setStatus(message || 'Upload canceled. Start a new upload to continue.');
+		clearStoredState(state.file);
+		state.retryText = '-';
+		setExtraDetails();
+	}
+
 	function clearSelectionAndState() {
 		clearStoredState(state.file);
 		fileInput.value = '';
@@ -476,6 +466,8 @@
 		state.uploadedBytes = 0;
 		state.controller = null;
 		state.speedSamples = [];
+		state.cancelRequested = false;
+		state.cancelExecuted = false;
 	}
 
 	function showResumePrompt(savedState, message) {
@@ -540,6 +532,9 @@
 		state.speedSamples = [];
 		state.lastError = '-';
 		state.retryText = '-';
+		state.cancelRequested = false;
+		state.cancelExecuted = false;
+		state.controller = new AbortController();
 		recordSpeedSample(0);
 		setSubmitDisabled(true);
 		showModal(file);
@@ -555,7 +550,10 @@
 				state.status = 'preparing';
 				setButtonsForStatus('preparing');
 				setStatus('Preparing upload...');
-				const existsPayload = await checkExistingFile(file);
+				const existsPayload = await jsonRequest(`/api/uploads/exists?${new URLSearchParams({ path: targetPath, filename: file.name }).toString()}`, {
+					method: 'GET',
+					signal: state.controller.signal,
+				});
 				if (existsPayload && existsPayload.exists) {
 					overwrite = window.confirm(`A file with the same name already exists in this folder: ${file.name}. Overwrite?`);
 					if (!overwrite) {
@@ -566,7 +564,23 @@
 						return;
 					}
 				}
-				const initPayload = await initUpload(file, overwrite);
+				const initPayload = await jsonRequest('/api/uploads/init', {
+					method: 'POST',
+					headers: {
+						'Content-Type': 'application/json'
+					},
+					body: JSON.stringify({
+						filename: file.name,
+						total_size: file.size,
+						chunk_size: defaultChunkSize,
+						total_chunks: Math.ceil(file.size / defaultChunkSize),
+						target_path: targetPath,
+						overwrite: !!overwrite,
+					}),
+					signal: state.controller.signal,
+				});
+				initPayload.overwrite = !!overwrite;
+				saveUploadState(file, initPayload);
 				saved = readUploadStateForFile(file);
 				uploadId = initPayload.upload_id;
 			}
@@ -577,9 +591,17 @@
 			setButtonsForStatus(state.status);
 			setStatus(opts.forceResume ? 'Resuming upload...' : 'Uploading chunks...');
 
-			const statusPayload = await fetchStatus(uploadId);
+			const statusPayload = await jsonRequest(`/api/uploads/${encodeURIComponent(uploadId)}/status`, {
+				method: 'GET',
+				signal: state.controller.signal,
+			});
 			if (statusPayload.status === 'completed') {
 				markDone('Upload already completed.');
+				return;
+			}
+			if (statusPayload.status === 'canceled') {
+				clearStoredState(file);
+				markCanceled('Upload was canceled earlier and cannot be resumed. Start a new upload.');
 				return;
 			}
 
@@ -601,7 +623,7 @@
 				const start = chunkIndex * chunkSize;
 				const end = Math.min(start + chunkSize, file.size);
 				const chunkBlob = file.slice(start, end);
-				await uploadChunkWithRetry(uploadId, chunkIndex, chunkBlob);
+				await uploadChunkWithRetry(uploadId, chunkIndex, chunkBlob, state.controller.signal);
 				state.uploadedBytes += chunkBlob.size;
 				recordSpeedSample(state.uploadedBytes);
 				updateProgress(state.uploadedCount + 1, totalChunks);
@@ -614,7 +636,14 @@
 			state.status = 'completing';
 			setButtonsForStatus('completing');
 			setStatus('Completing upload...');
-			const completePayload = await completeUpload(uploadId);
+			const completePayload = await jsonRequest(`/api/uploads/${encodeURIComponent(uploadId)}/complete`, {
+				method: 'POST',
+				headers: {
+					'Content-Type': 'application/json'
+				},
+				body: JSON.stringify({}),
+				signal: state.controller.signal,
+			});
 			if (completePayload.duplicate) {
 				markDone('File already exists. Upload skipped.');
 				return;
@@ -623,6 +652,10 @@
 			markDone('Upload complete.');
 		} catch (err) {
 			if (err && err.name === 'AbortError') {
+				if (state.cancelRequested) {
+					markCanceled('Upload canceled. Start a new upload to continue.');
+					return;
+				}
 				markPaused();
 				return;
 			}
@@ -675,26 +708,38 @@
 	}
 
 	async function cancelUpload() {
+		if (!state.uploadId || state.cancelExecuted || state.status === 'done') {
+			return;
+		}
+		if (!window.confirm('Cancel this upload? This cannot be resumed.')) {
+			return;
+		}
+		const activeUploadId = state.uploadId;
+		state.cancelRequested = true;
+		state.cancelExecuted = true;
+		setButtonsForStatus('done');
 		if (state.controller) {
 			state.controller.abort();
 		}
-		if (state.uploadId) {
+		try {
 			try {
-				await jsonRequest(`/api/uploads/${encodeURIComponent(state.uploadId)}/cancel`, {
+				await jsonRequest(`/api/uploads/${encodeURIComponent(activeUploadId)}/cancel`, {
 					method: 'POST',
 					headers: { 'Content-Type': 'application/json' },
 					body: JSON.stringify({}),
 				});
-			} catch (_err) {
-				// ignore cancel errors in UI flow
+				markCanceled('Upload canceled. Start a new upload to continue.');
+			} catch (err) {
+				state.status = 'error';
+				state.lastError = parseErrorMessage(err);
+				setExtraDetails();
+				setStatus('Upload canceled locally, but server cleanup failed. You can start a new upload.');
+				setSubmitDisabled(false);
 			}
+		} finally {
+			clearStoredState(state.file);
+			hideResumePrompt();
 		}
-		clearSelectionAndState();
-		state.status = 'idle';
-		state.isUploading = false;
-		setSubmitDisabled(false);
-		hideModal({ reset: true });
-		hideResumePrompt();
 	}
 
 	fileInput.addEventListener('change', function () {

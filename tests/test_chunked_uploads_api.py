@@ -341,35 +341,75 @@ def test_status_reflects_uploaded_chunks(client, db):
 	assert payload["missing_chunks"] == [1, 2]
 
 
-def test_cancel_updates_status_and_removes_tmp_dir(client, db, app):
+def test_cancel_deletes_chunks_and_db_rows(client, db, app):
 	_insert_user(db)
 	_set_logged_in(client)
 	csrf = _csrf_from_page(client)
+	upload_id = _create_upload(client, csrf, total_size=6, chunk_size=3, total_chunks=2)
 
-	upload_id = "up-cancel"
-	db(
-		"""
-		INSERT INTO uploads (
-			id, user_id, target_path, filename_original, filename_final,
-			total_size, chunk_size, total_chunks, status,
-			created_at, updated_at, expires_at, last_activity_at
+	first_chunk = b"abc"
+	second_chunk = b"def"
+	for chunk_index, chunk_data in ((0, first_chunk), (1, second_chunk)):
+		chunk_resp = client.post(
+			f"/api/uploads/{upload_id}/chunk",
+			data=chunk_data,
+			headers={
+				"Content-Type": "application/octet-stream",
+				"X-Chunk-Index": str(chunk_index),
+				"X-Chunk-Size": str(len(chunk_data)),
+				"X-CSRFToken": csrf,
+			},
 		)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-		""",
-		(upload_id, 1, "", "a.bin", "a.bin", 10, 5, 2, "initiated"),
+		assert chunk_resp.status_code == 200
+
+	tmp_dir = Path(app.config["UPLOAD_TMP_DIR_ABS"]) / "1" / upload_id
+	assert (tmp_dir / "chunks" / "0.part").exists()
+	assert (tmp_dir / "chunks" / "1.part").exists()
+	chunk_rows_before = db("SELECT COUNT(*) AS c FROM upload_chunks WHERE upload_id = ?", (upload_id,))
+	assert chunk_rows_before[0]["c"] == 2
+
+	cancel_resp = client.post(f"/api/uploads/{upload_id}/cancel", headers={"X-CSRFToken": csrf})
+	assert cancel_resp.status_code == 200
+	assert cancel_resp.get_json() == {"ok": True, "status": "canceled"}
+
+	chunk_rows_after = db("SELECT COUNT(*) AS c FROM upload_chunks WHERE upload_id = ?", (upload_id,))
+	assert chunk_rows_after[0]["c"] == 0
+	upload_rows = db("SELECT status FROM uploads WHERE id = ?", (upload_id,))
+	assert upload_rows[0]["status"] == "canceled"
+	assert not tmp_dir.exists()
+
+
+
+def test_status_canceled_is_terminal(client, db):
+	_insert_user(db)
+	_set_logged_in(client)
+	csrf = _csrf_from_page(client)
+	upload_id = _create_upload(client, csrf, total_size=8, chunk_size=4, total_chunks=2)
+
+	chunk_resp = client.post(
+		f"/api/uploads/{upload_id}/chunk",
+		data=b"abcd",
+		headers={
+			"Content-Type": "application/octet-stream",
+			"X-Chunk-Index": "0",
+			"X-Chunk-Size": "4",
+			"X-CSRFToken": csrf,
+		},
 	)
-	chunk_dir = Path(app.config["UPLOAD_TMP_DIR_ABS"]) / "1" / upload_id / "chunks"
-	chunk_dir.mkdir(parents=True, exist_ok=True)
-	(chunk_dir / "0.part").write_text("x", encoding="utf-8")
+	assert chunk_resp.status_code == 200
 
-	resp = client.post(f"/api/uploads/{upload_id}/cancel", headers={"X-CSRFToken": csrf})
-	assert resp.status_code == 200
-	payload = resp.get_json()
-	assert payload == {"ok": True, "status": "canceled"}
+	cancel_resp = client.post(f"/api/uploads/{upload_id}/cancel", headers={"X-CSRFToken": csrf})
+	assert cancel_resp.status_code == 200
 
-	rows = db("SELECT status FROM uploads WHERE id = ?", (upload_id,))
-	assert rows[0]["status"] == "canceled"
-	assert not (Path(app.config["UPLOAD_TMP_DIR_ABS"]) / "1" / upload_id).exists()
+	status_resp = client.get(f"/api/uploads/{upload_id}/status")
+	assert status_resp.status_code == 200
+	payload = status_resp.get_json()
+	assert payload["status"] == "canceled"
+	assert payload["uploaded_chunks"] == []
+	assert payload["missing_chunks"] == [0, 1]
+	assert payload["total_chunks"] == 2
+	assert payload["expected_total_size"] == 8
+	assert payload["chunk_size"] == 4
 
 
 def test_unauthorized_access_blocked(client):
