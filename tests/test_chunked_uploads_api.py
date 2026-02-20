@@ -129,6 +129,11 @@ def test_status_returns_full_missing_range_when_no_chunks(client, db):
 	resp = client.get("/api/uploads/up-status/status")
 	assert resp.status_code == 200
 	payload = resp.get_json()
+	assert payload["upload_id"] == "up-status"
+	assert payload["status"] == "initiated"
+	assert payload["total_chunks"] == 3
+	assert payload["expected_total_size"] == 13
+	assert payload["chunk_size"] == 5
 	assert payload["uploaded_chunks"] == []
 	assert payload["missing_chunks"] == [0, 1, 2]
 
