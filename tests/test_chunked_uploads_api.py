@@ -26,15 +26,16 @@ def _csrf_from_page(client, path="/login"):
 	return match.group(1)
 
 
-def _create_upload(client, csrf, total_size=3072, chunk_size=1024, total_chunks=3):
+def _create_upload(client, csrf, total_size=3072, chunk_size=1024, total_chunks=3, filename="chunk.bin", target_path="", overwrite=False):
 	resp = client.post(
 		"/api/uploads/init",
 		json={
-			"filename": "chunk.bin",
+			"filename": filename,
 			"total_size": total_size,
 			"chunk_size": chunk_size,
 			"total_chunks": total_chunks,
-			"target_path": "",
+			"target_path": target_path,
+			"overwrite": overwrite,
 		},
 		headers={"X-CSRFToken": csrf},
 	)
@@ -130,6 +131,68 @@ def test_status_returns_full_missing_range_when_no_chunks(client, db):
 	payload = resp.get_json()
 	assert payload["uploaded_chunks"] == []
 	assert payload["missing_chunks"] == [0, 1, 2]
+
+
+def test_exists_returns_false_for_missing_file(client, db):
+	_insert_user(db)
+	_set_logged_in(client)
+
+	resp = client.get("/api/uploads/exists?path=&filename=missing.txt")
+	assert resp.status_code == 200
+	payload = resp.get_json()
+	assert payload == {"exists": False, "file": None}
+
+
+def test_exists_returns_true_with_metadata_for_existing_file(client, db):
+	_insert_user(db)
+	_set_logged_in(client)
+	db(
+		"""
+		INSERT INTO user_files (user_id, path, filename, size, sha256, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+		""",
+		(1, "docs", "report.pdf", 123, "a" * 64),
+	)
+
+	resp = client.get("/api/uploads/exists?path=/docs&filename=report.pdf")
+	assert resp.status_code == 200
+	payload = resp.get_json()
+	assert payload["exists"] is True
+	assert payload["file"]["filename"] == "report.pdf"
+	assert payload["file"]["path"] == "docs"
+	assert payload["file"]["size"] == 123
+	assert payload["file"]["sha256"] == "a" * 64
+
+
+def test_init_returns_409_when_existing_file_and_overwrite_false(client, db):
+	_insert_user(db)
+	_set_logged_in(client)
+	csrf = _csrf_from_page(client)
+	db(
+		"""
+		INSERT INTO user_files (user_id, path, filename, size, sha256)
+		VALUES (?, ?, ?, ?, ?)
+		""",
+		(1, "docs", "chunk.bin", 11, "b" * 64),
+	)
+
+	resp = client.post(
+		"/api/uploads/init",
+		json={
+			"filename": "chunk.bin",
+			"total_size": 10,
+			"chunk_size": 5,
+			"total_chunks": 2,
+			"target_path": "docs",
+			"overwrite": False,
+		},
+		headers={"X-CSRFToken": csrf},
+	)
+	assert resp.status_code == 409
+	payload = resp.get_json()
+	assert payload["error"] == "file_exists"
+	assert payload["filename"] == "chunk.bin"
+	assert payload["path"] == "docs"
 
 
 def test_upload_chunk_happy_path(client, db, app):
@@ -519,7 +582,7 @@ def test_complete_duplicate_does_not_delete_existing_same_target_file(client, db
 	)
 	existing_row = db("SELECT id FROM user_files WHERE user_id = ? AND sha256 = ?", (1, sha256_content))[0]
 
-	upload_id = _create_upload(client, csrf, total_size=len(content), chunk_size=5, total_chunks=5)
+	upload_id = _create_upload(client, csrf, total_size=len(content), chunk_size=5, total_chunks=5, overwrite=True)
 	for idx, start in enumerate(range(0, len(content), 5)):
 		chunk = content[start : start + 5]
 		resp = _upload_chunk(client, upload_id, csrf, idx, chunk)
@@ -528,8 +591,7 @@ def test_complete_duplicate_does_not_delete_existing_same_target_file(client, db
 	complete_resp = client.post(f"/api/uploads/{upload_id}/complete", headers={"X-CSRFToken": csrf})
 	assert complete_resp.status_code == 200
 	payload = complete_resp.get_json()
-	assert payload["duplicate"] is True
-	assert payload["file_id"] == str(existing_row["id"])
+	assert payload["duplicate"] is False
 
 	assert existing_path.exists()
 	assert existing_path.read_bytes() == content
@@ -680,3 +742,58 @@ def test_complete_happy_path_ok_implies_file_exists_and_size_matches(client, db,
 	assert final_path.exists()
 	assert final_path.is_file()
 	assert final_path.stat().st_size == len(content)
+
+
+def test_overwrite_flow_replaces_existing_file_after_complete(client, db, app):
+	_insert_user(db)
+	_set_logged_in(client)
+	csrf = _csrf_from_page(client)
+	filename = "same.bin"
+	target_path = "folder-x"
+	storage_dir = Path(app.root_path).parent / "storage" / "1" / target_path
+	storage_dir.mkdir(parents=True, exist_ok=True)
+
+	content_a = b"AAAA"
+	upload_id_a = _create_upload(
+		client,
+		csrf,
+		total_size=len(content_a),
+		chunk_size=len(content_a),
+		total_chunks=1,
+		filename=filename,
+		target_path=target_path,
+	)
+	resp_chunk_a = _upload_chunk(client, upload_id_a, csrf, 0, content_a)
+	assert resp_chunk_a.status_code == 200
+	complete_a = client.post(f"/api/uploads/{upload_id_a}/complete", headers={"X-CSRFToken": csrf})
+	assert complete_a.status_code == 200
+
+	content_b = b"BBBB-new"
+	upload_id_b = _create_upload(
+		client,
+		csrf,
+		total_size=len(content_b),
+		chunk_size=4,
+		total_chunks=2,
+		filename=filename,
+		target_path=target_path,
+		overwrite=True,
+	)
+	resp_chunk_b0 = _upload_chunk(client, upload_id_b, csrf, 0, content_b[:4])
+	resp_chunk_b1 = _upload_chunk(client, upload_id_b, csrf, 1, content_b[4:])
+	assert resp_chunk_b0.status_code == 200
+	assert resp_chunk_b1.status_code == 200
+	complete_b = client.post(f"/api/uploads/{upload_id_b}/complete", headers={"X-CSRFToken": csrf})
+	assert complete_b.status_code == 200
+
+	rows = db(
+		"SELECT id, size, sha256 FROM user_files WHERE user_id = ? AND path = ? AND filename = ?",
+		(1, target_path, filename),
+	)
+	assert len(rows) == 1
+	assert rows[0]["size"] == len(content_b)
+	assert rows[0]["sha256"] == hashlib.sha256(content_b).hexdigest()
+
+	final_path = storage_dir / filename
+	assert final_path.exists()
+	assert final_path.read_bytes() == content_b

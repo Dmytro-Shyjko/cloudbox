@@ -46,6 +46,13 @@ def _ensure_user_files_columns(conn: sqlite3.Connection) -> None:
 		conn.execute("ALTER TABLE user_files ADD COLUMN size INTEGER")
 	if "sha256" not in cols:
 		conn.execute("ALTER TABLE user_files ADD COLUMN sha256 TEXT")
+	conn.execute("CREATE INDEX IF NOT EXISTS idx_user_files_user_path_filename ON user_files(user_id, path, filename)")
+
+
+def _ensure_uploads_columns(conn: sqlite3.Connection) -> None:
+	cols = {row["name"] for row in conn.execute("PRAGMA table_info(uploads)").fetchall()}
+	if "overwrite_requested" not in cols:
+		conn.execute("ALTER TABLE uploads ADD COLUMN overwrite_requested INTEGER NOT NULL DEFAULT 0")
 
 
 def _apply_chunked_uploads_foundation_migration(conn: sqlite3.Connection) -> None:
@@ -63,6 +70,7 @@ def _apply_chunked_uploads_foundation_migration(conn: sqlite3.Connection) -> Non
 			status TEXT NOT NULL,
 			sha256_client TEXT,
 			sha256_final TEXT,
+			overwrite_requested INTEGER NOT NULL DEFAULT 0,
 			created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
 			updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
 			expires_at DATETIME NOT NULL,
@@ -107,6 +115,7 @@ def _apply_chunked_uploads_foundation_migration(conn: sqlite3.Connection) -> Non
 		"""
 	)
 	_ensure_user_files_columns(conn)
+	_ensure_uploads_columns(conn)
 	conn.execute("CREATE INDEX IF NOT EXISTS idx_user_files_user_sha256 ON user_files(user_id, sha256)")
 
 
@@ -133,6 +142,9 @@ def _run_migrations(conn: sqlite3.Connection) -> None:
 			"INSERT INTO schema_migrations(name) VALUES (?)",
 			(CHUNKED_UPLOADS_FOUNDATION_MIGRATION,),
 		)
+	else:
+		_ensure_user_files_columns(conn)
+		_ensure_uploads_columns(conn)
 
 
 def user_storage_used_bytes(app, user_id: int) -> int:

@@ -185,7 +185,17 @@
 		return payload;
 	}
 
-	async function ensureUploadId(file) {
+	async function checkExistingFile(file) {
+		const params = new URLSearchParams({
+			path: targetPath,
+			filename: file.name,
+		});
+		return jsonRequest(`/api/uploads/exists?${params.toString()}`, {
+			method: 'GET'
+		});
+	}
+
+	async function ensureUploadId(file, overwrite) {
 		const key = localStorageKey(file);
 		const existingUploadId = localStorage.getItem(key);
 		if (existingUploadId) {
@@ -204,6 +214,7 @@
 				chunk_size: defaultChunkSize,
 				total_chunks: totalChunks,
 				target_path: targetPath,
+				overwrite: !!overwrite,
 			})
 		});
 		localStorage.setItem(key, payload.upload_id);
@@ -295,7 +306,20 @@
 		setButtonsForStatus('uploading');
 
 		try {
-			const uploadId = await ensureUploadId(file);
+			const existsPayload = await checkExistingFile(file);
+			let overwrite = false;
+			if (existsPayload && existsPayload.exists) {
+				overwrite = window.confirm(`A file with the same name already exists in this folder: ${file.name}. Overwrite?`);
+				if (!overwrite) {
+					state.status = 'error';
+					setButtonsForStatus('error');
+					setSubmitDisabled(false);
+					setStatus('Upload canceled. Existing file was not overwritten.');
+					return;
+				}
+			}
+
+			const uploadId = await ensureUploadId(file, overwrite);
 			state.uploadId = uploadId;
 			state.status = 'uploading';
 			state.controller = new AbortController();
@@ -336,7 +360,9 @@
 			state.status = 'error';
 			setButtonsForStatus('error');
 			setSubmitDisabled(false);
-			if (err && err.status === 409) {
+			if (err && err.status === 409 && err.payload && err.payload.error === 'file_exists') {
+				setStatus('File already exists in this folder. Choose overwrite to continue.');
+			} else if (err && err.status === 409) {
 				setStatus('Chunk state mismatch. Press Resume to re-check status and continue.');
 			} else {
 				setStatus('Connection lost, you can resume.');
