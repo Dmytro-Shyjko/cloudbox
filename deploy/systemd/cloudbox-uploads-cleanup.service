@@ -1,0 +1,11 @@
+[Unit]
+Description=CloudBox stale uploads cleanup
+After=network.target
+
+[Service]
+Type=oneshot
+User=cloudbox
+Group=cloudbox
+WorkingDirectory=/opt/cloudbox
+EnvironmentFile=/etc/cloudbox/cloudbox.env
+ExecStart=/opt/cloudbox/.venv/bin/flask --app run.py uploads cleanup

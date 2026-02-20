@@ -1,0 +1,12 @@
+[Unit]
+Description=Run CloudBox uploads cleanup periodically
+
+[Timer]
+OnBootSec=10m
+OnUnitActiveSec=1h
+RandomizedDelaySec=15m
+Persistent=true
+Unit=cloudbox-uploads-cleanup.service
+
+[Install]
+WantedBy=timers.target

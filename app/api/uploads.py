@@ -180,18 +180,25 @@ def cleanup_upload_artifacts(
 	filename_final: str,
 	request_id: str | None = None,
 	status_after_cleanup: str | None = "canceled",
+	delete_db_rows: bool = True,
+	delete_tmp_files: bool = True,
+	delete_assembled_temp: bool = True,
+	dry_run: bool = False,
 ) -> dict:
 	chunks_deleted_count = 0
 	files_deleted_count = 0
+	tmp_dirs_deleted_count = 0
 	now_db = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
 
-	chunk_count_row = conn.execute(
-		"SELECT COUNT(*) AS c FROM upload_chunks WHERE upload_id = ?",
-		(upload_id,),
-	).fetchone()
-	chunks_deleted_count = int(chunk_count_row["c"]) if chunk_count_row else 0
-	conn.execute("DELETE FROM upload_chunks WHERE upload_id = ?", (upload_id,))
-	if status_after_cleanup is not None:
+	if delete_db_rows:
+		chunk_count_row = conn.execute(
+			"SELECT COUNT(*) AS c FROM upload_chunks WHERE upload_id = ?",
+			(upload_id,),
+		).fetchone()
+		chunks_deleted_count = int(chunk_count_row["c"]) if chunk_count_row else 0
+		if not dry_run:
+			conn.execute("DELETE FROM upload_chunks WHERE upload_id = ?", (upload_id,))
+	if status_after_cleanup is not None and not dry_run:
 		conn.execute(
 			"UPDATE uploads SET status = ?, updated_at = ?, last_activity_at = ? WHERE id = ? AND user_id = ?",
 			(status_after_cleanup, now_db, now_db, upload_id, user_id),
@@ -200,7 +207,7 @@ def cleanup_upload_artifacts(
 	upload_root_dir = resolve_chunk_upload_dir(user_id, upload_id).parent
 	tmp_root = Path(current_app.config["UPLOAD_TMP_DIR_ABS"])
 	can_remove_tmp = _is_path_within(tmp_root, upload_root_dir) and str(user_id) in upload_root_dir.resolve(strict=False).parts and upload_id in upload_root_dir.resolve(strict=False).parts
-	if can_remove_tmp and upload_root_dir.exists():
+	if delete_tmp_files and can_remove_tmp and upload_root_dir.exists():
 		try:
 			for path in upload_root_dir.rglob("*"):
 				if path.is_file():
@@ -212,7 +219,9 @@ def cleanup_upload_artifacts(
 						upload_id,
 						str(path.resolve(strict=False)),
 					)
-			shutil.rmtree(upload_root_dir)
+			if not dry_run:
+				shutil.rmtree(upload_root_dir)
+				tmp_dirs_deleted_count = 1
 		except OSError as exc:
 			current_app.logger.warning(
 				"CANCEL request_id=%s failed tmp cleanup user_id=%s upload_id=%s dir=%s error=%s",
@@ -222,7 +231,7 @@ def cleanup_upload_artifacts(
 				str(upload_root_dir.resolve(strict=False)),
 				exc,
 			)
-	elif upload_root_dir.exists():
+	elif delete_tmp_files and upload_root_dir.exists():
 		current_app.logger.warning(
 			"CANCEL request_id=%s skipped tmp cleanup outside root user_id=%s upload_id=%s tmp_root=%s candidate=%s",
 			request_id or "-",
@@ -232,48 +241,51 @@ def cleanup_upload_artifacts(
 			str(upload_root_dir.resolve(strict=False)),
 		)
 
-	try:
-		final_path = resolve_final_file_path(user_id, target_path or "", filename_final)
-		parent_dir = final_path.parent
-		candidate_paths = [
-			final_path.with_name(f"{final_path.name}.{upload_id}.uploading"),
-			final_path.with_name(f"{final_path.name}.{upload_id}.temp_final"),
-			final_path.with_name(f"{final_path.name}.{upload_id}.tmp"),
-		]
-		for artifact_path in candidate_paths:
-			if artifact_path.exists() and _is_path_within(parent_dir, artifact_path):
-				try:
-					artifact_path.unlink(missing_ok=True)
-					files_deleted_count += 1
-					current_app.logger.debug(
-						"CANCEL request_id=%s removing assembled artifact user_id=%s upload_id=%s path=%s",
-						request_id or "-",
-						user_id,
-						upload_id,
-						str(artifact_path.resolve(strict=False)),
-					)
-				except OSError as exc:
-					current_app.logger.warning(
-						"CANCEL request_id=%s failed assembled artifact cleanup user_id=%s upload_id=%s path=%s error=%s",
-						request_id or "-",
-						user_id,
-						upload_id,
-						str(artifact_path.resolve(strict=False)),
-						exc,
-					)
-	except ValueError:
-		current_app.logger.warning(
-			"CANCEL request_id=%s skipped assembled artifact cleanup due to invalid path user_id=%s upload_id=%s target_path=%s filename_final=%s",
-			request_id or "-",
-			user_id,
-			upload_id,
-			target_path,
-			filename_final,
-		)
+	if delete_assembled_temp:
+		try:
+			final_path = resolve_final_file_path(user_id, target_path or "", filename_final)
+			parent_dir = final_path.parent
+			candidate_paths = [
+				final_path.with_name(f"{final_path.name}.{upload_id}.uploading"),
+				final_path.with_name(f"{final_path.name}.{upload_id}.temp_final"),
+				final_path.with_name(f"{final_path.name}.{upload_id}.tmp"),
+			]
+			for artifact_path in candidate_paths:
+				if artifact_path.exists() and _is_path_within(parent_dir, artifact_path):
+					try:
+						if not dry_run:
+							artifact_path.unlink(missing_ok=True)
+						files_deleted_count += 1
+						current_app.logger.debug(
+							"CANCEL request_id=%s removing assembled artifact user_id=%s upload_id=%s path=%s",
+							request_id or "-",
+							user_id,
+							upload_id,
+							str(artifact_path.resolve(strict=False)),
+						)
+					except OSError as exc:
+						current_app.logger.warning(
+							"CANCEL request_id=%s failed assembled artifact cleanup user_id=%s upload_id=%s path=%s error=%s",
+							request_id or "-",
+							user_id,
+							upload_id,
+							str(artifact_path.resolve(strict=False)),
+							exc,
+						)
+		except ValueError:
+			current_app.logger.warning(
+				"CANCEL request_id=%s skipped assembled artifact cleanup due to invalid path user_id=%s upload_id=%s target_path=%s filename_final=%s",
+				request_id or "-",
+				user_id,
+				upload_id,
+				target_path,
+				filename_final,
+			)
 
 	return {
 		"chunks_deleted_count": chunks_deleted_count,
 		"files_deleted_count": files_deleted_count,
+		"tmp_dirs_deleted_count": tmp_dirs_deleted_count,
 	}
 
 
