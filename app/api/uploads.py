@@ -360,10 +360,11 @@ def upload_status(upload_id: str):
 	user_id, auth_error = _api_login_required()
 	if auth_error:
 		return auth_error
+	current_app.logger.debug("chunk upload status requested", extra={"upload_id": upload_id, "user_id": user_id})
 
 	with get_db(current_app) as conn:
 		upload_row = conn.execute(
-			"SELECT id, status, total_chunks, expires_at FROM uploads WHERE id = ? AND user_id = ?",
+			"SELECT id, status, total_chunks, total_size, chunk_size, expires_at FROM uploads WHERE id = ? AND user_id = ?",
 			(upload_id, user_id),
 		).fetchone()
 		if not upload_row:
@@ -387,8 +388,11 @@ def upload_status(upload_id: str):
 		{
 			"upload_id": upload_id,
 			"status": upload_row["status"],
+			"total_chunks": int(upload_row["total_chunks"]),
 			"uploaded_chunks": uploaded_chunks,
 			"missing_chunks": missing_chunks,
+			"expected_total_size": int(upload_row["total_size"]),
+			"chunk_size": int(upload_row["chunk_size"]),
 			"expires_at": _to_iso8601(upload_row["expires_at"]),
 		}
 	)

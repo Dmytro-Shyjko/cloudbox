@@ -29,20 +29,65 @@
 
 	const thresholdBytes = Number(uploadRoot.dataset.chunkedThresholdBytes || 20 * 1024 * 1024);
 	const defaultChunkSize = 5 * 1024 * 1024;
-	const userId = uploadRoot.dataset.userId || '0';
+	const userId = (uploadRoot.dataset.userId || '').trim();
 	const targetPath = uploadRoot.dataset.targetPath || '';
 	const csrfToken = readCsrfToken();
+	const retryDelaysMs = [500, 1000, 2000, 4000, 8000];
+	const storagePrefix = userId ? `cb_upload:${userId}:${targetPath}:` : `cb_upload:${targetPath}:`;
+
+	const detailsExtra = ensureExtraDetails();
+	const resumePrompt = ensureResumePrompt();
 
 	const state = {
 		file: null,
 		uploadId: null,
-		fingerprint: null,
 		totalChunks: 0,
 		uploadedCount: 0,
+		uploadedBytes: 0,
 		status: 'idle',
 		controller: null,
 		isUploading: false,
+		overwrite: false,
+		activeStorageKey: null,
+		speedSamples: [],
+		retryText: '-',
+		lastError: '-',
 	};
+
+	function ensureExtraDetails() {
+		const container = document.createElement('div');
+		container.className = 'muted';
+		container.style.marginTop = '8px';
+		container.innerHTML = '<p><b>Speed:</b> <span data-cu-speed>-</span></p><p><b>ETA:</b> <span data-cu-eta>-</span></p><p><b>Current chunk:</b> <span data-cu-current>-</span></p><p><b>Retry:</b> <span data-cu-retry>-</span></p><p><b>Last error:</b> <span data-cu-error>-</span></p>';
+		const actions = modal.querySelector('.chunked-upload-actions');
+		if (actions) {
+			modal.insertBefore(container, actions);
+		} else {
+			modal.appendChild(container);
+		}
+		return {
+			speed: container.querySelector('[data-cu-speed]'),
+			eta: container.querySelector('[data-cu-eta]'),
+			current: container.querySelector('[data-cu-current]'),
+			retry: container.querySelector('[data-cu-retry]'),
+			error: container.querySelector('[data-cu-error]'),
+		};
+	}
+
+	function ensureResumePrompt() {
+		const prompt = document.createElement('div');
+		prompt.className = 'notice hidden';
+		prompt.setAttribute('data-cu-resume-prompt', '1');
+		prompt.innerHTML = '<span data-cu-resume-text></span> <button type="button" data-cu-resume-accept>Resume</button> <button type="button" data-cu-resume-dismiss>Dismiss</button>';
+		uploadRoot.insertBefore(prompt, uploadForm);
+		return {
+			root: prompt,
+			text: prompt.querySelector('[data-cu-resume-text]'),
+			resume: prompt.querySelector('[data-cu-resume-accept]'),
+			dismiss: prompt.querySelector('[data-cu-resume-dismiss]'),
+			pendingState: null,
+		};
+	}
 
 	function readCsrfToken() {
 		const tokenInput = uploadForm.querySelector('input[name="csrf_token"]') || document.querySelector('input[name="csrf_token"]');
@@ -53,12 +98,22 @@
 		return meta ? meta.getAttribute('content') : '';
 	}
 
-	function buildFingerprint(file) {
-		return `${file.name}|${file.size}|${file.lastModified}`;
+	function storageKeyForFile(file) {
+		const parts = [
+			'cb_upload',
+		];
+		if (userId) {
+			parts.push(userId);
+		}
+		parts.push(targetPath);
+		parts.push(file.name);
+		parts.push(String(file.size));
+		parts.push(String(file.lastModified));
+		return parts.join(':');
 	}
 
-	function localStorageKey(file) {
-		return `cb_upload_${userId}_${buildFingerprint(file)}`;
+	function hasValidFile(file) {
+		return !!file && Number.isFinite(file.size) && file.size > 0;
 	}
 
 	function formatBytes(bytes) {
@@ -75,8 +130,35 @@
 		return idx === 0 ? `${Math.round(value)} ${units[idx]}` : `${value.toFixed(1)} ${units[idx]}`;
 	}
 
+	function formatSpeed(bytesPerSecond) {
+		if (!Number.isFinite(bytesPerSecond) || bytesPerSecond <= 0) {
+			return '-';
+		}
+		return `${(bytesPerSecond / (1024 * 1024)).toFixed(2)} MB/s`;
+	}
+
+	function formatEta(seconds) {
+		if (!Number.isFinite(seconds) || seconds <= 0) {
+			return '-';
+		}
+		if (seconds < 60) {
+			return `${Math.ceil(seconds)}s`;
+		}
+		return `${Math.ceil(seconds / 60)}m`;
+	}
+
 	function setStatus(message) {
 		detailsStatus.textContent = message;
+	}
+
+	function setExtraDetails() {
+		detailsExtra.retry.textContent = state.retryText;
+		detailsExtra.error.textContent = state.lastError;
+		const speed = computeSpeed();
+		detailsExtra.speed.textContent = formatSpeed(speed);
+		const remainingBytes = Math.max((state.file ? state.file.size : 0) - state.uploadedBytes, 0);
+		detailsExtra.eta.textContent = speed > 0 ? formatEta(remainingBytes / speed) : '-';
+		detailsExtra.current.textContent = state.totalChunks > 0 ? `${Math.min(state.uploadedCount + 1, state.totalChunks)} / ${state.totalChunks}` : '-';
 	}
 
 	function resetModalUI() {
@@ -85,12 +167,11 @@
 		detailsProgress.textContent = '0%';
 		detailsChunks.textContent = '0 / 0';
 		progressBar.style.width = '0%';
+		state.retryText = '-';
+		state.lastError = '-';
 		setStatus('Waiting...');
 		setButtonsForStatus('idle');
-	}
-
-	function hasValidFile(file) {
-		return !!file && Number.isFinite(file.size) && file.size > 0;
+		setExtraDetails();
 	}
 
 	function isModalVisible() {
@@ -113,42 +194,14 @@
 		overlay.classList.remove('hidden');
 	}
 
-	function ensureValidVisibleModalState() {
-		if (!isModalVisible()) {
-			return;
-		}
-		if (!state.file || state.file.size <= 0 || state.totalChunks <= 0) {
-			hideModal({ reset: true });
-		}
-	}
-
 	function setSubmitDisabled(disabled) {
 		submitButton.disabled = disabled;
-	}
-
-	function clearSelectionAndState() {
-		if (state.file) {
-			localStorage.removeItem(localStorageKey(state.file));
-		}
-		fileInput.value = '';
-		state.file = null;
-		state.uploadId = null;
-		state.fingerprint = null;
-		state.totalChunks = 0;
-		state.uploadedCount = 0;
-		ensureValidVisibleModalState();
-	}
-
-	function getSuccessNavigationUrl() {
-		const url = new URL(window.location.href);
-		url.searchParams.set('uploaded', '1');
-		return `${url.pathname}${url.search}`;
 	}
 
 	function setButtonsForStatus(status) {
 		const isPaused = status === 'paused';
 		const isDone = status === 'done';
-		const isActive = status === 'uploading' || status === 'completing';
+		const isActive = status === 'uploading' || status === 'completing' || status === 'resuming' || status === 'preparing';
 		pauseBtn.disabled = !isActive;
 		resumeBtn.disabled = !(isPaused || status === 'error');
 		cancelBtn.disabled = isDone;
@@ -161,6 +214,90 @@
 		detailsChunks.textContent = `${Math.min(uploadedCount, safeTotal)} / ${safeTotal}`;
 		progressBar.style.width = `${percent}%`;
 		state.uploadedCount = uploadedCount;
+		setExtraDetails();
+	}
+
+	function recordSpeedSample(bytesUploaded) {
+		state.speedSamples.push({ ts: Date.now(), bytes: bytesUploaded });
+		const cutoff = Date.now() - 5000;
+		state.speedSamples = state.speedSamples.filter(function (sample) {
+			return sample.ts >= cutoff;
+		});
+	}
+
+	function computeSpeed() {
+		if (state.speedSamples.length < 2) {
+			return 0;
+		}
+		const first = state.speedSamples[0];
+		const last = state.speedSamples[state.speedSamples.length - 1];
+		const elapsedSeconds = (last.ts - first.ts) / 1000;
+		if (elapsedSeconds <= 0) {
+			return 0;
+		}
+		const bytesDelta = last.bytes - first.bytes;
+		return bytesDelta > 0 ? bytesDelta / elapsedSeconds : 0;
+	}
+
+	function saveUploadState(file, payload) {
+		const key = storageKeyForFile(file);
+		const data = {
+			uploadId: payload.upload_id,
+			path: targetPath,
+			filename: file.name,
+			size: file.size,
+			lastModified: file.lastModified,
+			chunkSize: payload.chunk_size || defaultChunkSize,
+			totalChunks: payload.total_chunks || Math.ceil(file.size / defaultChunkSize),
+			overwrite: !!payload.overwrite,
+			createdAt: Date.now(),
+		};
+		localStorage.setItem(key, JSON.stringify(data));
+		state.activeStorageKey = key;
+		return data;
+	}
+
+	function readUploadStateForFile(file) {
+		const key = storageKeyForFile(file);
+		const raw = localStorage.getItem(key);
+		if (!raw) {
+			return null;
+		}
+		try {
+			const parsed = JSON.parse(raw);
+			if (!parsed || !parsed.uploadId) {
+				localStorage.removeItem(key);
+				return null;
+			}
+			state.activeStorageKey = key;
+			return parsed;
+		} catch (_err) {
+			localStorage.removeItem(key);
+			return null;
+		}
+	}
+
+	function clearStoredState(file) {
+		if (file) {
+			localStorage.removeItem(storageKeyForFile(file));
+		}
+		if (state.activeStorageKey) {
+			localStorage.removeItem(state.activeStorageKey);
+			state.activeStorageKey = null;
+		}
+	}
+
+	function parseErrorMessage(err) {
+		if (!err) {
+			return 'Unknown error';
+		}
+		if (err.payload && typeof err.payload.error === 'string' && err.payload.error) {
+			return err.payload.error;
+		}
+		if (err.message) {
+			return err.message;
+		}
+		return 'Unexpected error';
 	}
 
 	async function jsonRequest(url, options) {
@@ -195,13 +332,13 @@
 		});
 	}
 
-	async function ensureUploadId(file, overwrite) {
-		const key = localStorageKey(file);
-		const existingUploadId = localStorage.getItem(key);
-		if (existingUploadId) {
-			state.uploadId = existingUploadId;
-			return existingUploadId;
-		}
+	async function fetchStatus(uploadId) {
+		return jsonRequest(`/api/uploads/${encodeURIComponent(uploadId)}/status`, {
+			method: 'GET'
+		});
+	}
+
+	async function initUpload(file, overwrite) {
 		const totalChunks = Math.ceil(file.size / defaultChunkSize);
 		const payload = await jsonRequest('/api/uploads/init', {
 			method: 'POST',
@@ -217,42 +354,91 @@
 				overwrite: !!overwrite,
 			})
 		});
-		localStorage.setItem(key, payload.upload_id);
-		state.uploadId = payload.upload_id;
-		return payload.upload_id;
-	}
-
-	async function fetchStatus(uploadId) {
-		return jsonRequest(`/api/uploads/${encodeURIComponent(uploadId)}/status`, {
-			method: 'GET'
-		});
-	}
-
-	async function uploadChunk(uploadId, chunkIndex, chunkBlob) {
-		const response = await fetch(`/api/uploads/${encodeURIComponent(uploadId)}/chunk`, {
-			method: 'POST',
-			headers: {
-				'Content-Type': 'application/octet-stream',
-				'X-CSRFToken': csrfToken,
-				'X-Chunk-Index': String(chunkIndex),
-				'X-Chunk-Size': String(chunkBlob.size),
-			},
-			body: chunkBlob,
-			signal: state.controller ? state.controller.signal : undefined,
-		});
-		let payload = {};
-		try {
-			payload = await response.json();
-		} catch (_err) {
-			payload = {};
-		}
-		if (!response.ok) {
-			const err = new Error(payload.error || `Chunk upload failed (${response.status})`);
-			err.status = response.status;
-			err.payload = payload;
-			throw err;
-		}
+		payload.overwrite = !!overwrite;
+		saveUploadState(file, payload);
 		return payload;
+	}
+
+	function getMissingChunksFromStatus(statusPayload, fallbackTotal) {
+		if (Array.isArray(statusPayload.missing_chunks)) {
+			return statusPayload.missing_chunks.slice();
+		}
+		const totalChunks = Number(statusPayload.total_chunks || fallbackTotal || 0);
+		if (!Array.isArray(statusPayload.uploaded_chunks)) {
+			return [];
+		}
+		const uploadedSet = new Set(statusPayload.uploaded_chunks);
+		const missing = [];
+		for (let idx = 0; idx < totalChunks; idx += 1) {
+			if (!uploadedSet.has(idx)) {
+				missing.push(idx);
+			}
+		}
+		return missing;
+	}
+
+	function isRetryable(statusCode) {
+		return statusCode === 429 || statusCode >= 500;
+	}
+
+	function delay(ms) {
+		return new Promise(function (resolve) {
+			window.setTimeout(resolve, ms);
+		});
+	}
+
+	async function uploadChunkWithRetry(uploadId, chunkIndex, chunkBlob) {
+		for (let attempt = 1; attempt <= retryDelaysMs.length; attempt += 1) {
+			state.controller = new AbortController();
+			try {
+				const response = await fetch(`/api/uploads/${encodeURIComponent(uploadId)}/chunk`, {
+					method: 'POST',
+					headers: {
+						'Content-Type': 'application/octet-stream',
+						'X-CSRFToken': csrfToken,
+						'X-Chunk-Index': String(chunkIndex),
+						'X-Chunk-Size': String(chunkBlob.size),
+					},
+					body: chunkBlob,
+					signal: state.controller.signal,
+				});
+				let payload = {};
+				try {
+					payload = await response.json();
+				} catch (_err) {
+					payload = {};
+				}
+				if (response.ok) {
+					state.retryText = '-';
+					state.lastError = '-';
+					return payload;
+				}
+				const error = new Error(payload.error || `Chunk upload failed (${response.status})`);
+				error.status = response.status;
+				error.payload = payload;
+				if (isRetryable(response.status) && attempt < retryDelaysMs.length) {
+					state.retryText = `Retry ${attempt + 1}/${retryDelaysMs.length}...`;
+					state.lastError = parseErrorMessage(error);
+					setExtraDetails();
+					await delay(retryDelaysMs[attempt - 1]);
+					continue;
+				}
+				throw error;
+			} catch (error) {
+				if (error && error.name === 'AbortError') {
+					throw error;
+				}
+				if (isRetryable(error.status || 0) && attempt < retryDelaysMs.length) {
+					state.retryText = `Retry ${attempt + 1}/${retryDelaysMs.length}...`;
+					state.lastError = parseErrorMessage(error);
+					setExtraDetails();
+					await delay(retryDelaysMs[attempt - 1]);
+					continue;
+				}
+				throw error;
+			}
+		}
+		throw new Error('Chunk retries exhausted');
 	}
 
 	async function completeUpload(uploadId) {
@@ -272,86 +458,169 @@
 		setStatus('Upload paused. You can resume.');
 	}
 
-	function finishAndNavigate(message) {
+	function markDone(message) {
 		state.status = 'done';
 		setButtonsForStatus('done');
-		setStatus(message);
-		clearSelectionAndState();
 		setSubmitDisabled(false);
-		setTimeout(function () {
-			hideModal({ reset: true });
-			window.location.assign(getSuccessNavigationUrl());
-		}, 600);
+		setStatus(message);
+		clearStoredState(state.file);
 	}
 
-	async function runChunkedUpload(file) {
+	function clearSelectionAndState() {
+		clearStoredState(state.file);
+		fileInput.value = '';
+		state.file = null;
+		state.uploadId = null;
+		state.totalChunks = 0;
+		state.uploadedCount = 0;
+		state.uploadedBytes = 0;
+		state.controller = null;
+		state.speedSamples = [];
+	}
+
+	function showResumePrompt(savedState, message) {
+		resumePrompt.pendingState = savedState;
+		resumePrompt.text.textContent = message || `Resume previous upload for ${savedState.filename}?`;
+		resumePrompt.root.classList.remove('hidden');
+	}
+
+	function hideResumePrompt() {
+		resumePrompt.pendingState = null;
+		resumePrompt.root.classList.add('hidden');
+	}
+
+	function findSavedStateForCurrentPath() {
+		let latest = null;
+		for (let index = 0; index < localStorage.length; index += 1) {
+			const key = localStorage.key(index);
+			if (!key || !key.startsWith(storagePrefix)) {
+				continue;
+			}
+			const raw = localStorage.getItem(key);
+			if (!raw) {
+				continue;
+			}
+			try {
+				const parsed = JSON.parse(raw);
+				if (!parsed || !parsed.uploadId || !parsed.filename) {
+					continue;
+				}
+				if (!latest || Number(parsed.createdAt || 0) > Number(latest.createdAt || 0)) {
+					latest = parsed;
+				}
+			} catch (_err) {
+				localStorage.removeItem(key);
+			}
+		}
+		return latest;
+	}
+
+	function maybePromptResumeForFile(file) {
+		if (!hasValidFile(file) || file.size <= thresholdBytes) {
+			hideResumePrompt();
+			return;
+		}
+		const saved = readUploadStateForFile(file);
+		if (saved && saved.uploadId) {
+			showResumePrompt(saved, `Resume previous upload for ${saved.filename}?`);
+			setStatus('Resume is available for this file.');
+			return;
+		}
+		hideResumePrompt();
+	}
+
+	async function runChunkedUpload(file, options) {
+		const opts = Object.assign({ forceResume: false }, options || {});
 		if (state.isUploading || !hasValidFile(file)) {
 			return;
 		}
 		state.isUploading = true;
-		setSubmitDisabled(true);
 		state.file = file;
-		state.fingerprint = buildFingerprint(file);
-		state.totalChunks = Math.ceil(file.size / defaultChunkSize);
+		state.uploadedBytes = 0;
+		state.speedSamples = [];
+		state.lastError = '-';
+		state.retryText = '-';
+		recordSpeedSample(0);
+		setSubmitDisabled(true);
+		showModal(file);
 		detailsFilename.textContent = file.name;
 		detailsSize.textContent = formatBytes(file.size);
-		showModal(file);
-		ensureValidVisibleModalState();
-		if (!isModalVisible()) {
-			state.isUploading = false;
-			setSubmitDisabled(false);
-			return;
-		}
-		setStatus('Preparing upload...');
-		setButtonsForStatus('uploading');
 
 		try {
-			const existsPayload = await checkExistingFile(file);
-			let overwrite = false;
-			if (existsPayload && existsPayload.exists) {
-				overwrite = window.confirm(`A file with the same name already exists in this folder: ${file.name}. Overwrite?`);
-				if (!overwrite) {
-					state.status = 'error';
-					setButtonsForStatus('error');
-					setSubmitDisabled(false);
-					setStatus('Upload canceled. Existing file was not overwritten.');
-					return;
+			let saved = readUploadStateForFile(file);
+			let uploadId = saved ? saved.uploadId : null;
+			let overwrite = !!(saved && saved.overwrite);
+
+			if (!uploadId) {
+				state.status = 'preparing';
+				setButtonsForStatus('preparing');
+				setStatus('Preparing upload...');
+				const existsPayload = await checkExistingFile(file);
+				if (existsPayload && existsPayload.exists) {
+					overwrite = window.confirm(`A file with the same name already exists in this folder: ${file.name}. Overwrite?`);
+					if (!overwrite) {
+						state.status = 'error';
+						setButtonsForStatus('error');
+						setSubmitDisabled(false);
+						setStatus('Upload canceled. Existing file was not overwritten.');
+						return;
+					}
 				}
+				const initPayload = await initUpload(file, overwrite);
+				saved = readUploadStateForFile(file);
+				uploadId = initPayload.upload_id;
 			}
 
-			const uploadId = await ensureUploadId(file, overwrite);
 			state.uploadId = uploadId;
-			state.status = 'uploading';
-			state.controller = new AbortController();
+			state.overwrite = overwrite;
+			state.status = opts.forceResume ? 'resuming' : 'uploading';
+			setButtonsForStatus(state.status);
+			setStatus(opts.forceResume ? 'Resuming upload...' : 'Uploading chunks...');
 
 			const statusPayload = await fetchStatus(uploadId);
-			const missingChunks = Array.isArray(statusPayload.missing_chunks) ? statusPayload.missing_chunks : [];
-			updateProgress(state.totalChunks - missingChunks.length, state.totalChunks);
-			setStatus('Uploading chunks...');
+			if (statusPayload.status === 'completed') {
+				markDone('Upload already completed.');
+				return;
+			}
+
+			const totalChunks = Number(statusPayload.total_chunks || (saved && saved.totalChunks) || Math.ceil(file.size / defaultChunkSize));
+			state.totalChunks = totalChunks;
+			const missingChunks = getMissingChunksFromStatus(statusPayload, totalChunks);
+			const uploadedCount = Math.max(totalChunks - missingChunks.length, 0);
+			const chunkSize = Number(statusPayload.chunk_size || (saved && saved.chunkSize) || defaultChunkSize);
+			state.uploadedBytes = Math.min(uploadedCount * chunkSize, file.size);
+			recordSpeedSample(state.uploadedBytes);
+			updateProgress(uploadedCount, totalChunks);
 
 			for (const chunkIndex of missingChunks) {
-				if (state.status !== 'uploading') {
+				if (state.status !== 'uploading' && state.status !== 'resuming') {
 					break;
 				}
-				const start = chunkIndex * defaultChunkSize;
-				const end = Math.min(start + defaultChunkSize, file.size);
+				state.retryText = '-';
+				setExtraDetails();
+				const start = chunkIndex * chunkSize;
+				const end = Math.min(start + chunkSize, file.size);
 				const chunkBlob = file.slice(start, end);
-				await uploadChunk(uploadId, chunkIndex, chunkBlob);
-				updateProgress(state.uploadedCount + 1, state.totalChunks);
+				await uploadChunkWithRetry(uploadId, chunkIndex, chunkBlob);
+				state.uploadedBytes += chunkBlob.size;
+				recordSpeedSample(state.uploadedBytes);
+				updateProgress(state.uploadedCount + 1, totalChunks);
 			}
 
-			if (state.status !== 'uploading') {
+			if (state.status !== 'uploading' && state.status !== 'resuming') {
 				return;
 			}
 
-			setStatus('Completing upload...');
+			state.status = 'completing';
 			setButtonsForStatus('completing');
+			setStatus('Completing upload...');
 			const completePayload = await completeUpload(uploadId);
 			if (completePayload.duplicate) {
-				finishAndNavigate('File already exists. Upload skipped.');
+				markDone('File already exists. Upload skipped.');
 				return;
 			}
-			finishAndNavigate('Upload complete.');
+			updateProgress(totalChunks, totalChunks);
+			markDone('Upload complete.');
 		} catch (err) {
 			if (err && err.name === 'AbortError') {
 				markPaused();
@@ -360,15 +629,16 @@
 			state.status = 'error';
 			setButtonsForStatus('error');
 			setSubmitDisabled(false);
-			if (err && err.status === 409 && err.payload && err.payload.error === 'file_exists') {
-				setStatus('File already exists in this folder. Choose overwrite to continue.');
-			} else if (err && err.status === 409) {
-				setStatus('Chunk state mismatch. Press Resume to re-check status and continue.');
+			state.lastError = parseErrorMessage(err);
+			setExtraDetails();
+			if (err && [400, 401, 403, 409].includes(err.status)) {
+				setStatus(`Upload failed: ${parseErrorMessage(err)}`);
 			} else {
-				setStatus('Connection lost, you can resume.');
+				setStatus('Upload interrupted. You can resume.');
 			}
 		} finally {
 			state.isUploading = false;
+			state.controller = null;
 		}
 	}
 
@@ -379,13 +649,29 @@
 	}
 
 	function resumeUpload() {
-		if (!state.file) {
+		const file = fileInput.files && fileInput.files[0] ? fileInput.files[0] : state.file;
+		if (!file) {
 			setStatus('Select the same file to resume upload.');
 			return;
 		}
-		state.status = 'uploading';
-		setButtonsForStatus('uploading');
-		runChunkedUpload(state.file);
+		hideResumePrompt();
+		runChunkedUpload(file, { forceResume: true });
+	}
+
+	async function dismissResumeState() {
+		const file = fileInput.files && fileInput.files[0] ? fileInput.files[0] : null;
+		if (file) {
+			clearStoredState(file);
+		} else if (resumePrompt.pendingState) {
+			const pending = resumePrompt.pendingState;
+			const fakeFile = {
+				name: pending.filename,
+				size: pending.size,
+				lastModified: pending.lastModified,
+			};
+			clearStoredState(fakeFile);
+		}
+		hideResumePrompt();
 	}
 
 	async function cancelUpload() {
@@ -405,16 +691,17 @@
 		}
 		clearSelectionAndState();
 		state.status = 'idle';
-		state.controller = null;
 		state.isUploading = false;
 		setSubmitDisabled(false);
 		hideModal({ reset: true });
+		hideResumePrompt();
 	}
 
 	fileInput.addEventListener('change', function () {
 		const file = fileInput.files && fileInput.files[0] ? fileInput.files[0] : null;
 		if (!file || file.size <= thresholdBytes) {
 			hideModal({ reset: true });
+			hideResumePrompt();
 			return;
 		}
 		detailsFilename.textContent = file.name;
@@ -423,6 +710,7 @@
 		setStatus('Ready to upload. Press upload to begin.');
 		setButtonsForStatus('paused');
 		resumeBtn.disabled = true;
+		maybePromptResumeForFile(file);
 	});
 
 	uploadForm.addEventListener('submit', function (event) {
@@ -431,7 +719,8 @@
 			return;
 		}
 		event.preventDefault();
-		runChunkedUpload(file);
+		hideResumePrompt();
+		runChunkedUpload(file, { forceResume: false });
 	});
 
 	submitButton.addEventListener('click', function () {
@@ -443,27 +732,41 @@
 			uploadForm.requestSubmit();
 			return;
 		}
-		runChunkedUpload(file);
+		hideResumePrompt();
+		runChunkedUpload(file, { forceResume: false });
 	});
 
 	pauseBtn.addEventListener('click', pauseUpload);
 	resumeBtn.addEventListener('click', resumeUpload);
 	cancelBtn.addEventListener('click', cancelUpload);
 	closeBtn.addEventListener('click', function () {
-		hideModal({ reset: true });
+		hideModal({ reset: false });
 	});
 	overlay.addEventListener('click', function (event) {
 		if (event.target === overlay) {
-			hideModal({ reset: true });
+			hideModal({ reset: false });
 		}
 	});
 	document.addEventListener('keydown', function (event) {
 		if (event.key === 'Escape' && isModalVisible()) {
-			hideModal({ reset: true });
+			hideModal({ reset: false });
 		}
 	});
+
+	resumePrompt.resume.addEventListener('click', function () {
+		resumeUpload();
+	});
+	resumePrompt.dismiss.addEventListener('click', function () {
+		dismissResumeState();
+	});
+
 	document.addEventListener('DOMContentLoaded', function () {
 		hideModal({ reset: true });
+		const saved = findSavedStateForCurrentPath();
+		if (saved) {
+			showResumePrompt(saved, `Resume previous upload for ${saved.filename}?`);
+			setStatus('A previous upload can be resumed after selecting the same file.');
+		}
 	});
 
 	hideModal({ reset: true });
