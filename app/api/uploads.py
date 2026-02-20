@@ -70,6 +70,16 @@ def _to_iso8601(value: str | None) -> str | None:
 	return value
 
 
+def _to_bool(value) -> bool:
+	if isinstance(value, bool):
+		return value
+	if isinstance(value, (int, float)):
+		return bool(value)
+	if isinstance(value, str):
+		return value.strip().lower() in ("1", "true", "yes", "on")
+	return False
+
+
 def _is_chunk_path_safe(chunk_dir: Path, chunk_file: Path) -> bool:
 	try:
 		base_resolved = chunk_dir.resolve(strict=False)
@@ -204,6 +214,8 @@ def init_upload():
 	except ValueError:
 		return _json_error("invalid target_path")
 
+	overwrite_requested = _to_bool(data.get("overwrite"))
+
 	upload_id = str(uuid.uuid4())
 	now_dt = datetime.now(timezone.utc)
 	expires_at_dt = now_dt + timedelta(hours=int(current_app.config["UPLOAD_TTL_HOURS"]))
@@ -211,6 +223,34 @@ def init_upload():
 	expires_at_db = expires_at_dt.strftime("%Y-%m-%d %H:%M:%S")
 
 	with get_db(current_app) as conn:
+		existing_same_name = conn.execute(
+			"""
+			SELECT id
+			FROM user_files
+			WHERE user_id = ? AND path = ? AND filename = ?
+			LIMIT 1
+			""",
+			(user_id, target_path, filename_final),
+		).fetchone()
+		if existing_same_name and not overwrite_requested:
+			current_app.logger.info(
+				"INIT refused file_exists user_id=%s path=%s filename=%s",
+				user_id,
+				target_path,
+				filename_final,
+			)
+			return (
+				jsonify(
+					{
+						"error": "file_exists",
+						"message": "File already exists in target folder",
+						"filename": filename_final,
+						"path": target_path,
+					}
+				),
+				409,
+			)
+
 		row = conn.execute(
 			"""
 			SELECT COUNT(*) AS c
@@ -228,9 +268,9 @@ def init_upload():
 			INSERT INTO uploads (
 				id, user_id, target_path, filename_original, filename_final,
 				total_size, chunk_size, total_chunks, status,
-				sha256_client, created_at, updated_at, expires_at, last_activity_at
+				sha256_client, overwrite_requested, created_at, updated_at, expires_at, last_activity_at
 			)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 			""",
 			(
 				upload_id,
@@ -243,6 +283,7 @@ def init_upload():
 				total_chunks,
 				"initiated",
 				sha256_client or None,
+				1 if overwrite_requested else 0,
 				now_db,
 				now_db,
 				expires_at_db,
@@ -264,6 +305,52 @@ def init_upload():
 			"uploaded_chunks": [],
 			"missing_chunks": list(range(total_chunks)),
 			"expires_at": expires_at_dt.isoformat().replace("+00:00", "Z"),
+		}
+	)
+
+
+@uploads_api_bp.get("/exists")
+def file_exists_in_target_folder():
+	user_id, auth_error = _api_login_required()
+	if auth_error:
+		return auth_error
+
+	filename_original = (request.args.get("filename") or "").strip()
+	if not filename_original:
+		return _json_error("filename is required")
+
+	filename_final = secure_filename(filename_original) or "file"
+	try:
+		target_path = _normalize_target_path(request.args.get("path"))
+	except ValueError:
+		return _json_error("invalid path")
+
+	with get_db(current_app) as conn:
+		row = conn.execute(
+			"""
+			SELECT id, filename, path, size, sha256, created_at
+			FROM user_files
+			WHERE user_id = ? AND path = ? AND filename = ?
+			ORDER BY id DESC
+			LIMIT 1
+			""",
+			(user_id, target_path, filename_final),
+		).fetchone()
+
+	if not row:
+		return jsonify({"exists": False, "file": None})
+
+	return jsonify(
+		{
+			"exists": True,
+			"file": {
+				"id": row["id"],
+				"filename": row["filename"],
+				"path": row["path"] or "",
+				"size": row["size"],
+				"sha256": row["sha256"],
+				"created_at": _to_iso8601(row["created_at"]),
+			},
 		}
 	)
 
@@ -504,7 +591,7 @@ def complete_upload(upload_id: str):
 	with get_db(current_app) as conn:
 		upload_row = conn.execute(
 			"""
-			SELECT id, status, total_chunks, target_path, filename_original, filename_final, total_size
+			SELECT id, status, total_chunks, target_path, filename_original, filename_final, total_size, overwrite_requested
 			FROM uploads
 			WHERE id = ? AND user_id = ?
 			""",
@@ -658,6 +745,9 @@ def complete_upload(upload_id: str):
 				os.fsync(dest.fileno())
 
 			sha256_final = hasher.hexdigest()
+			overwrite_requested = bool(upload_row["overwrite_requested"])
+			target_path = upload_row["target_path"] or ""
+			target_filename = upload_row["filename_final"]
 			current_app.logger.info(
 				"COMPLETE request_id=%s assembled user_id=%s upload_id=%s bytes_written=%s sha256_final=%s",
 				request_id,
@@ -666,6 +756,37 @@ def complete_upload(upload_id: str):
 				size_written,
 				sha256_final,
 			)
+
+			if overwrite_requested:
+				existing_overwrite_row = conn.execute(
+					"""
+					SELECT id
+					FROM user_files
+					WHERE user_id = ? AND path = ? AND filename = ?
+					ORDER BY id DESC
+					LIMIT 1
+					""",
+					(user_id, target_path, target_filename),
+				).fetchone()
+				if existing_overwrite_row:
+					deleted_file_id = int(existing_overwrite_row["id"])
+					try:
+						existing_disk_path = resolve_final_file_path(user_id, target_path, target_filename)
+					except ValueError:
+						existing_disk_path = None
+					if existing_disk_path and existing_disk_path.exists() and existing_disk_path.is_file():
+						existing_disk_path.unlink(missing_ok=True)
+					conn.execute(
+						"DELETE FROM user_files WHERE user_id = ? AND path = ? AND filename = ?",
+						(user_id, target_path, target_filename),
+					)
+					current_app.logger.info(
+						"COMPLETE overwrite removed existing file user_id=%s path=%s filename=%s deleted_file_id=%s",
+						user_id,
+						target_path,
+						target_filename,
+						deleted_file_id,
+					)
 
 			existing_rows = conn.execute(
 				"SELECT id, path, filename FROM user_files WHERE user_id = ? AND sha256 = ? ORDER BY id ASC",
