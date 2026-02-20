@@ -357,6 +357,18 @@ def init_upload():
 	expires_at_db = expires_at_dt.strftime("%Y-%m-%d %H:%M:%S")
 
 	with get_db(current_app) as conn:
+		conn.execute(
+			"""
+			UPDATE uploads
+			SET status = 'expired', updated_at = ?, last_activity_at = ?
+			WHERE user_id = ?
+				AND status IN ('initiated', 'uploading', 'assembling')
+				AND expires_at IS NOT NULL
+				AND expires_at <= ?
+			""",
+			(now_db, now_db, user_id, now_db),
+		)
+
 		existing_same_name = conn.execute(
 			"""
 			SELECT id
@@ -389,13 +401,19 @@ def init_upload():
 			"""
 			SELECT COUNT(*) AS c
 			FROM uploads
-			WHERE user_id = ? AND status IN ('initiated', 'uploading', 'assembling')
+			WHERE user_id = ?
+				AND status IN ('initiated', 'uploading', 'assembling')
+				AND (expires_at IS NULL OR expires_at > ?)
 			""",
-			(user_id,),
+			(user_id, now_db),
 		).fetchone()
 		active_uploads = int(row["c"])
-		if active_uploads >= int(current_app.config["MAX_ACTIVE_UPLOADS_PER_USER"]):
-			return _json_error("maximum number of active uploads reached", 429)
+		max_active_uploads = int(current_app.config["MAX_ACTIVE_UPLOADS_PER_USER"])
+		if active_uploads >= max_active_uploads:
+			return _json_error(
+				f"maximum number of active uploads reached ({active_uploads}/{max_active_uploads}); cancel or finish existing uploads first",
+				429,
+			)
 
 		conn.execute(
 			"""

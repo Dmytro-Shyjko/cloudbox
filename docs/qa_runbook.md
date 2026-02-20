@@ -1,100 +1,107 @@
-# CloudBox QA Runbook (Fresh Server)
+# CloudBox QA Runbook (Production Host)
 
-Use this on a staging/production-like Linux host where `systemd`, nginx, gunicorn, and Cloudflare tunnel are installed.
+Use this on the real server (Linux host with systemd + nginx + gunicorn).
 
-## Preconditions
-- Repo deployed at `/opt/cloudbox`.
-- Virtualenv exists at `/opt/cloudbox/.venv`.
-- Env file exists at `/etc/cloudbox/cloudbox.env` (with placeholder-safe values in docs only).
-- Service user/group (example: `cloudbox`) can write `UPLOAD_TMP_DIR`.
+## Environment baseline
+- Repo path: `/home/dmytro/cloudbox`
+- Gunicorn unit: `databoxpro-flask.service`
+- Gunicorn bind: `127.0.0.1:5000`
+- Env file: `/etc/cloudbox/cloudbox.env`
+- Required tmp dir: `/var/lib/cloudbox/uploads_tmp`
 
-## 1) Baseline system info
-
+Example safe env values (no secrets):
 ```bash
-python3 --version
-node --version
-nginx -v
-systemctl --version | head -n 2
+SECRET_KEY=replace-with-at-least-32-characters-minimum
+UPLOAD_MAX_MB=1024
+UPLOAD_TMP_DIR=/var/lib/cloudbox/uploads_tmp
 ```
 
-## 2) Local code regression checks
+## Production Evidence Checklist
+Run each command and confirm expected output.
 
+1) Service identity + bind
 ```bash
-cd /opt/cloudbox
-python3 -m compileall -q app tests
-pytest -q
-pytest -q tests/test_chunked_uploads_api.py
-pytest -q tests/test_delete_safety.py
-pytest -q tests/test_uploads_cleanup_cli.py
+systemctl status databoxpro-flask.service --no-pager
+systemctl cat databoxpro-flask.service
+ss -ltnp | rg ':5000'
 ```
+Expected:
+- unit is `active (running)`.
+- `--bind 127.0.0.1:5000` in ExecStart.
+- listener on `127.0.0.1:5000`.
 
-## 3) Static sanity checks
-
-```bash
-cd /opt/cloudbox
-node -e "const fs=require('fs');['app/static/chunked_upload.js','app/static/files_delete.js'].forEach(f=>{new Function(fs.readFileSync(f,'utf8')); console.log('OK',f);});"
-rg -n '/delete/' app/static || true
-rg -n '/api/uploads' app/static
-rg -n '<form[^>]*action=["'"'"'][^"'"'"']*/delete/' app/templates || true
-```
-
-## 4) Service env + tmp dir verification (critical)
-
+2) Runtime environment in process
 ```bash
 PID=$(systemctl show -p MainPID --value databoxpro-flask.service)
 echo "MainPID=$PID"
-sudo tr '\0' '\n' < /proc/$PID/environ | grep -E 'UPLOAD_TMP_DIR|SECRET_KEY|UPLOAD_MAX_MB'
+sudo tr '\0' '\n' < /proc/$PID/environ | rg 'SECRET_KEY|UPLOAD_MAX_MB|UPLOAD_TMP_DIR'
+```
+Expected:
+- `UPLOAD_MAX_MB=1024`
+- `UPLOAD_TMP_DIR=/var/lib/cloudbox/uploads_tmp`
+- `SECRET_KEY=` exists and value length is >=32 chars.
 
-ls -lah /var/lib/cloudbox/uploads_tmp
+3) Tmp directory ownership + writeability
+```bash
+ls -ld /var/lib/cloudbox/uploads_tmp
 sudo -u dmytro bash -lc 'touch /var/lib/cloudbox/uploads_tmp/.qa_touch && rm -f /var/lib/cloudbox/uploads_tmp/.qa_touch'
 ```
-
 Expected:
-- `UPLOAD_TMP_DIR=/var/lib/cloudbox/uploads_tmp` is present in process env.
-- directory exists, writable, and not under `instance/...` fallback.
+- directory exists.
+- service user can write.
 
-## 5) Cleanup timer/service verification
+4) Confirm no fallback to `instance/...`
+```bash
+cd /home/dmytro/cloudbox
+systemctl show -p MainPID --value databoxpro-flask.service
+sudo tr '\0' '\n' < /proc/$(systemctl show -p MainPID --value databoxpro-flask.service)/environ | rg '^UPLOAD_TMP_DIR='
+sudo find /home/dmytro/cloudbox/instance -maxdepth 4 -type d -name uploads_tmp
+```
+Expected:
+- runtime `UPLOAD_TMP_DIR` is only `/var/lib/cloudbox/uploads_tmp`.
+- no active chunk directories under `/home/dmytro/cloudbox/instance/uploads_tmp`.
 
+5) Cleanup service/timer
 ```bash
 systemctl status cloudbox-uploads-cleanup.timer --no-pager
-systemctl list-timers | grep cloudbox
 systemctl cat cloudbox-uploads-cleanup.service
-journalctl -u cloudbox-uploads-cleanup.service -n 100 --no-pager
-
-sudo -u dmytro bash -lc 'set -a; source /etc/cloudbox/cloudbox.env; set +a; cd ~/cloudbox; .venv/bin/flask --app run.py uploads cleanup --dry-run --ttl-hours 1'
+journalctl -u cloudbox-uploads-cleanup.service -n 50 --no-pager
 ```
-
 Expected:
-- timer enabled and next run scheduled,
-- cleanup summary lines in journal,
-- dry-run succeeds and prints summary counters.
+- timer enabled and scheduled.
+- cleanup service points to project venv + `uploads cleanup` command.
+- recent cleanup summary logs.
 
-## 6) nginx/proxy verification
-
+6) Nginx upload proxy tuning
 ```bash
-sudo nginx -T | rg -n 'client_max_body_size|proxy_read_timeout|proxy_send_timeout|proxy_request_buffering|/api/uploads|limit_req|429'
+sudo nginx -T | rg -n 'cloudbox_uploads.conf|client_max_body_size|proxy_read_timeout|proxy_send_timeout|proxy_request_buffering|/api/uploads/'
+```
+Expected:
+- include of `deploy/nginx/cloudbox_uploads.conf` (or copied equivalent).
+- `client_max_body_size 1024m` (or same policy).
+- explicit `/api/uploads/` location tuning.
+
+## Nginx include instructions
+1. Copy template:
+```bash
+sudo cp /home/dmytro/cloudbox/deploy/nginx/cloudbox_uploads.conf /etc/nginx/snippets/cloudbox_uploads.conf
+```
+2. Include in your `server {}`:
+```nginx
+include /etc/nginx/snippets/cloudbox_uploads.conf;
+```
+3. Validate + reload:
+```bash
+sudo nginx -t && sudo systemctl reload nginx
 ```
 
-Minimum recommendations:
-- `client_max_body_size` >= largest accepted chunk request.
-- `proxy_read_timeout` and `proxy_send_timeout` generous for slow clients.
-- if using strict rate-limits, exclude or tune `/api/uploads/init` to avoid poor UX.
-
-## 7) Manual E2E flows
-
-1. Login -> files list loads.
-2. Upload small file (legacy path) -> immediate appearance.
-3. Upload large file (chunked) -> modal progress + auto close on complete.
-4. Duplicate upload in same folder -> overwrite prompt works.
-5. Cancel mid-upload -> API 200, temp chunk data removed, UI closes.
-6. Resume after network interruption -> missing chunks resumed only.
-7. Delete invalid crafted request -> rejected and logged.
-8. Stale dedupe scenario -> stale metadata ignored/recovered.
-
-## 8) Evidence capture
-
-Save outputs for release artifact:
-- pytest summary,
-- `systemctl`/`journalctl` outputs,
-- nginx `-T` filtered snippet,
-- short screen recording/screenshot of chunked upload + cancel/resume behavior.
+## `/api/uploads/init` 429 note
+- In this app, 429 on init means active upload slots are exhausted (`MAX_ACTIVE_UPLOADS_PER_USER`), not a classic per-second rate limit.
+- First actions:
+	- finish/cancel active uploads,
+	- run cleanup timer/service,
+	- check for stale `initiated/uploading/assembling` rows.
+- Tuning:
+	- increase `MAX_ACTIVE_UPLOADS_PER_USER` carefully,
+	- keep cleanup timer running,
+	- avoid strict nginx `limit_req` on `/api/uploads/init`.

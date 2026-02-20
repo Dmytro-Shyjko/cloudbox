@@ -1,0 +1,17 @@
+[Unit]
+Description=DataboxPro Flask Gunicorn Service
+After=network.target
+
+[Service]
+Type=simple
+User=dmytro
+Group=dmytro
+WorkingDirectory=/home/dmytro/cloudbox
+EnvironmentFile=/etc/cloudbox/cloudbox.env
+Environment=UPLOAD_TMP_DIR=/var/lib/cloudbox/uploads_tmp
+ExecStart=/home/dmytro/cloudbox/.venv/bin/gunicorn --workers 2 --threads 4 --timeout 120 --bind 127.0.0.1:5000 --access-logfile - --error-logfile - "app:create_app()"
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
