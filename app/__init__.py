@@ -164,10 +164,12 @@ def create_app(test_config=None):
 	from .routes import main_bp
 	from .admin import admin_bp
 	from .api.uploads import uploads_api_bp
+	from .cli import init_uploads_cli
 
 	app.register_blueprint(auth_bp)
 	app.register_blueprint(main_bp)
 	app.register_blueprint(admin_bp)
 	app.register_blueprint(uploads_api_bp)
+	init_uploads_cli(app)
 
 	return app
