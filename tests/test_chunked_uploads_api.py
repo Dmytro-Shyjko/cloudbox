@@ -90,9 +90,9 @@ def test_init_enforces_max_active_uploads_per_user(client, db, app):
 			created_at, updated_at, expires_at, last_activity_at
 		)
 		VALUES
-			('u1', 1, '', 'a.bin', 'a.bin', 10, 5, 2, 'initiated', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
-			('u2', 1, '', 'b.bin', 'b.bin', 10, 5, 2, 'uploading', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
-			('u3', 1, '', 'c.bin', 'c.bin', 10, 5, 2, 'assembling', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+			('u1', 1, '', 'a.bin', 'a.bin', 10, 5, 2, 'initiated', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, DATETIME('now', '+1 day'), CURRENT_TIMESTAMP),
+			('u2', 1, '', 'b.bin', 'b.bin', 10, 5, 2, 'uploading', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, DATETIME('now', '+1 day'), CURRENT_TIMESTAMP),
+			('u3', 1, '', 'c.bin', 'c.bin', 10, 5, 2, 'assembling', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, DATETIME('now', '+1 day'), CURRENT_TIMESTAMP)
 		"""
 	)
 
@@ -108,6 +108,44 @@ def test_init_enforces_max_active_uploads_per_user(client, db, app):
 	)
 	assert resp.status_code == 429
 	assert "active uploads" in resp.get_json()["error"]
+
+
+def test_init_ignores_expired_active_uploads(client, db):
+	_insert_user(db)
+	_set_logged_in(client)
+	csrf = _csrf_from_page(client)
+
+	db(
+		"""
+		INSERT INTO uploads (
+			id, user_id, target_path, filename_original, filename_final,
+			total_size, chunk_size, total_chunks, status,
+			created_at, updated_at, expires_at, last_activity_at
+		)
+		VALUES
+			('old-init', 1, '', 'old.bin', 'old.bin', 10, 5, 2, 'initiated', DATETIME('now', '-2 day'), DATETIME('now', '-2 day'), DATETIME('now', '-1 day'), DATETIME('now', '-2 day')),
+			('old-uploading', 1, '', 'old2.bin', 'old2.bin', 10, 5, 2, 'uploading', DATETIME('now', '-2 day'), DATETIME('now', '-2 day'), DATETIME('now', '-1 day'), DATETIME('now', '-2 day')),
+			('active-one', 1, '', 'active.bin', 'active.bin', 10, 5, 2, 'initiated', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, DATETIME('now', '+1 day'), CURRENT_TIMESTAMP)
+		"""
+	)
+
+	resp = client.post(
+		"/api/uploads/init",
+		json={
+			"filename": "fresh.bin",
+			"total_size": 10,
+			"chunk_size": 5,
+			"target_path": "",
+		},
+		headers={"X-CSRFToken": csrf},
+	)
+	assert resp.status_code == 200
+
+	statuses = db("SELECT id, status FROM uploads WHERE id IN (?, ?)", ("old-init", "old-uploading"))
+	assert {row["id"]: row["status"] for row in statuses} == {
+		"old-init": "expired",
+		"old-uploading": "expired",
+	}
 
 
 def test_status_returns_full_missing_range_when_no_chunks(client, db):
