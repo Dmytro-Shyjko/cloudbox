@@ -33,7 +33,11 @@
 	const targetPath = uploadRoot.dataset.targetPath || '';
 	const csrfToken = readCsrfToken();
 	const retryDelaysMs = [500, 1000, 2000, 4000, 8000];
+	const AUTO_CLOSE_ON_DONE = true;
+	const DONE_CLOSE_DELAY_MS = 320;
+	const DEBUG_UPLOAD_DONE = false;
 	const storagePrefix = userId ? `cb_upload:${userId}:${targetPath}:` : `cb_upload:${targetPath}:`;
+	let lastFocusedElement = null;
 
 	const detailsExtra = ensureExtraDetails();
 	const resumePrompt = ensureResumePrompt();
@@ -183,6 +187,11 @@
 	function hideModal(options) {
 		const opts = Object.assign({ reset: false }, options || {});
 		overlay.classList.add('hidden');
+		document.body.classList.remove('modal-open');
+		if (lastFocusedElement && typeof lastFocusedElement.focus === 'function') {
+			lastFocusedElement.focus();
+		}
+		lastFocusedElement = null;
 		if (opts.reset) {
 			resetModalUI();
 		}
@@ -193,7 +202,37 @@
 			hideModal({ reset: true });
 			return;
 		}
+		lastFocusedElement = document.activeElement;
 		overlay.classList.remove('hidden');
+		document.body.classList.add('modal-open');
+		if (typeof closeBtn.focus === 'function') {
+			closeBtn.focus();
+		}
+	}
+
+	function buildFilesRedirectUrl() {
+		const url = new URL(window.location.href);
+		const params = new URLSearchParams(url.search);
+		params.set('uploaded', '1');
+		const pathValue = params.get('path');
+		if (pathValue === null) {
+			params.set('path', targetPath);
+		}
+		return `${url.pathname}?${params.toString()}`;
+	}
+
+	function onDoneUiSettledNavigate() {
+		const redirectUrl = buildFilesRedirectUrl();
+		if (DEBUG_UPLOAD_DONE) {
+			console.debug('UPLOAD_DONE navigating to', redirectUrl);
+		}
+		requestAnimationFrame(function () {
+			void modal.offsetHeight;
+			window.setTimeout(function () {
+				hideModal({ reset: false });
+				window.location.assign(redirectUrl);
+			}, DONE_CLOSE_DELAY_MS);
+		});
 	}
 
 	function setSubmitDisabled(disabled) {
@@ -506,6 +545,9 @@
 		setSubmitDisabled(false);
 		setStatus(message);
 		clearStoredState(state.file);
+		if (AUTO_CLOSE_ON_DONE) {
+			onDoneUiSettledNavigate();
+		}
 	}
 
 	function clearSelectionAndState() {
