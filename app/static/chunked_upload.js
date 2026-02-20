@@ -41,6 +41,8 @@
 
 	const detailsExtra = ensureExtraDetails();
 	const resumePrompt = ensureResumePrompt();
+	const retryCancelBtn = ensureRetryCancelButton();
+	let fileChangeDebounceTimer = null;
 
 	const state = {
 		file: null,
@@ -58,7 +60,22 @@
 		lastError: '-',
 		cancelRequested: false,
 		cancelInFlight: false,
+		initInFlight: false,
+		cancelErrorDetails: '',
 	};
+
+	function ensureRetryCancelButton() {
+		const btn = document.createElement('button');
+		btn.type = 'button';
+		btn.className = 'hidden';
+		btn.setAttribute('data-cu-retry-cancel', '1');
+		btn.textContent = 'Retry cancel';
+		const actions = modal.querySelector('.chunked-upload-actions');
+		if (actions) {
+			actions.appendChild(btn);
+		}
+		return btn;
+	}
 
 	function ensureExtraDetails() {
 		const container = document.createElement('div');
@@ -177,6 +194,7 @@
 		state.lastError = '-';
 		setStatus('Waiting...');
 		setButtonsForStatus('idle');
+		retryCancelBtn.classList.add('hidden');
 		setExtraDetails();
 	}
 
@@ -344,10 +362,13 @@
 	async function jsonRequest(url, options) {
 		const opts = Object.assign({}, options || {});
 		opts.headers = Object.assign({}, opts.headers || {});
+		if (!opts.credentials) {
+			opts.credentials = 'same-origin';
+		}
 		if (opts.method && opts.method.toUpperCase() === 'POST' && csrfToken) {
 			opts.headers['X-CSRFToken'] = csrfToken;
 		}
-		if (!opts.signal && state.controller) {
+		if (opts.signal === undefined && state.controller) {
 			opts.signal = state.controller.signal;
 		}
 		const response = await fetch(url, opts);
@@ -383,24 +404,34 @@
 	}
 
 	async function initUpload(file, overwrite) {
+		if (state.initInFlight) {
+			const initErr = new Error('Upload init already in progress');
+			initErr.status = 409;
+			throw initErr;
+		}
+		state.initInFlight = true;
 		const totalChunks = Math.ceil(file.size / defaultChunkSize);
-		const payload = await jsonRequest('/api/uploads/init', {
-			method: 'POST',
-			headers: {
-				'Content-Type': 'application/json'
-			},
-			body: JSON.stringify({
-				filename: file.name,
-				total_size: file.size,
-				chunk_size: defaultChunkSize,
-				total_chunks: totalChunks,
-				target_path: targetPath,
-				overwrite: !!overwrite,
-			})
-		});
-		payload.overwrite = !!overwrite;
-		saveUploadState(file, payload);
-		return payload;
+		try {
+			const payload = await jsonRequest('/api/uploads/init', {
+				method: 'POST',
+				headers: {
+					'Content-Type': 'application/json'
+				},
+				body: JSON.stringify({
+					filename: file.name,
+					total_size: file.size,
+					chunk_size: defaultChunkSize,
+					total_chunks: totalChunks,
+					target_path: targetPath,
+					overwrite: !!overwrite,
+				})
+			});
+			payload.overwrite = !!overwrite;
+			saveUploadState(file, payload);
+			return payload;
+		} finally {
+			state.initInFlight = false;
+		}
 	}
 
 	function getMissingChunksFromStatus(statusPayload, fallbackTotal) {
@@ -729,6 +760,10 @@
 			setSubmitDisabled(false);
 			state.lastError = parseErrorMessage(err);
 			setExtraDetails();
+			if (err && err.status === 429) {
+				setStatus('Too many upload attempts, wait 10s');
+				return;
+			}
 			if (err && [400, 401, 403, 409].includes(err.status)) {
 				setStatus(`Upload failed: ${parseErrorMessage(err)}`);
 			} else {
@@ -787,6 +822,8 @@
 		const cancelUploadId = state.uploadId;
 		state.cancelRequested = true;
 		state.cancelInFlight = true;
+		state.cancelErrorDetails = '';
+		retryCancelBtn.classList.add('hidden');
 		setButtonsForStatus(state.status);
 		if (state.controller) {
 			state.controller.abort();
@@ -795,38 +832,51 @@
 		try {
 			await jsonRequest(`/api/uploads/${encodeURIComponent(cancelUploadId)}/cancel`, {
 				method: 'POST',
-				headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify({}),
+				headers: {
+					'Content-Type': 'application/json',
+					'X-Requested-With': 'XMLHttpRequest',
+				},
+				credentials: 'same-origin',
 				signal: null,
+				body: JSON.stringify({}),
 			});
 			clearStoredState(state.file);
 			markCanceled('Upload canceled. Start a new upload to continue.');
+			hideModal({ reset: true });
 		} catch (err) {
-			clearStoredState(state.file);
 			state.cancelInFlight = false;
 			state.status = 'error';
 			setButtonsForStatus('error');
 			setSubmitDisabled(false);
-			state.lastError = `Cancel failed: ${parseErrorMessage(err)}`;
+			const statusText = err && err.status ? `HTTP ${err.status}` : 'HTTP error';
+			const payloadText = err && err.payload ? JSON.stringify(err.payload) : parseErrorMessage(err);
+			state.cancelErrorDetails = `${statusText} ${payloadText}`;
+			state.lastError = `Cancel failed: ${state.cancelErrorDetails}`;
+			retryCancelBtn.classList.remove('hidden');
 			setExtraDetails();
-			setStatus('Upload canceled locally, but server cleanup failed. Start a new upload.');
+			setStatus(`Cancel failed: ${state.cancelErrorDetails}`);
 		}
 	}
 
 	fileInput.addEventListener('change', function () {
-		const file = fileInput.files && fileInput.files[0] ? fileInput.files[0] : null;
-		if (!file || file.size <= thresholdBytes) {
-			hideModal({ reset: true });
-			hideResumePrompt();
-			return;
+		if (fileChangeDebounceTimer) {
+			window.clearTimeout(fileChangeDebounceTimer);
 		}
-		detailsFilename.textContent = file.name;
-		detailsSize.textContent = formatBytes(file.size);
-		updateProgress(0, Math.ceil(file.size / defaultChunkSize));
-		setStatus('Ready to upload. Press upload to begin.');
-		setButtonsForStatus('preparing');
-		resumeBtn.disabled = true;
-		maybePromptResumeForFile(file);
+		fileChangeDebounceTimer = window.setTimeout(function () {
+			const file = fileInput.files && fileInput.files[0] ? fileInput.files[0] : null;
+			if (!file || file.size <= thresholdBytes) {
+				hideModal({ reset: true });
+				hideResumePrompt();
+				return;
+			}
+			detailsFilename.textContent = file.name;
+			detailsSize.textContent = formatBytes(file.size);
+			updateProgress(0, Math.ceil(file.size / defaultChunkSize));
+			setStatus('Ready to upload. Press upload to begin.');
+			setButtonsForStatus('preparing');
+			resumeBtn.disabled = true;
+			maybePromptResumeForFile(file);
+		}, 150);
 	});
 
 	uploadForm.addEventListener('submit', function (event) {
@@ -855,6 +905,7 @@
 	pauseBtn.addEventListener('click', pauseUpload);
 	resumeBtn.addEventListener('click', resumeUpload);
 	cancelBtn.addEventListener('click', cancelUpload);
+	retryCancelBtn.addEventListener('click', cancelUpload);
 	closeBtn.addEventListener('click', function () {
 		hideModal({ reset: false });
 	});

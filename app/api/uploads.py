@@ -9,9 +9,12 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from flask import Blueprint, current_app, jsonify, request, session
+from flask_wtf.csrf import validate_csrf
+from wtforms.validators import ValidationError
 from werkzeug.utils import secure_filename
 
 from app.models import get_db
+from app import csrf
 
 
 uploads_api_bp = Blueprint("uploads_api", __name__, url_prefix="/api/uploads")
@@ -31,8 +34,22 @@ def compute_missing_chunks(total_chunks: int, uploaded_list: list[int]) -> list[
 	return [idx for idx in range(total_chunks) if idx not in uploaded_set]
 
 
-def _json_error(message: str, status_code: int = 400):
-	return jsonify({"error": message}), status_code
+def _json_error(message: str, status_code: int = 400, error_code: str | None = None):
+	payload = {"error": error_code or message}
+	if error_code:
+		payload["message"] = message
+	return jsonify(payload), status_code
+
+
+def _validate_cancel_csrf() -> tuple[bool, str]:
+	token = (request.headers.get("X-CSRFToken") or request.headers.get("X-CSRF-Token") or request.form.get("csrf_token") or "").strip()
+	if not token:
+		return False, "csrf_required"
+	try:
+		validate_csrf(token)
+	except ValidationError:
+		return False, "csrf_invalid"
+	return True, "ok"
 
 
 def _api_login_required():
@@ -155,7 +172,15 @@ def _remove_upload_tmp_dir(user_id: int, upload_id: str, request_id: str | None 
 	return True
 
 
-def cleanup_upload_artifacts(conn, upload_id: str, user_id: int, target_path: str, filename_final: str, request_id: str | None = None) -> dict:
+def cleanup_upload_artifacts(
+	conn,
+	upload_id: str,
+	user_id: int,
+	target_path: str,
+	filename_final: str,
+	request_id: str | None = None,
+	status_after_cleanup: str | None = "canceled",
+) -> dict:
 	chunks_deleted_count = 0
 	files_deleted_count = 0
 	now_db = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
@@ -166,10 +191,11 @@ def cleanup_upload_artifacts(conn, upload_id: str, user_id: int, target_path: st
 	).fetchone()
 	chunks_deleted_count = int(chunk_count_row["c"]) if chunk_count_row else 0
 	conn.execute("DELETE FROM upload_chunks WHERE upload_id = ?", (upload_id,))
-	conn.execute(
-		"UPDATE uploads SET status = 'canceled', updated_at = ?, last_activity_at = ? WHERE id = ? AND user_id = ?",
-		(now_db, now_db, upload_id, user_id),
-	)
+	if status_after_cleanup is not None:
+		conn.execute(
+			"UPDATE uploads SET status = ?, updated_at = ?, last_activity_at = ? WHERE id = ? AND user_id = ?",
+			(status_after_cleanup, now_db, now_db, upload_id, user_id),
+		)
 
 	upload_root_dir = resolve_chunk_upload_dir(user_id, upload_id).parent
 	tmp_root = Path(current_app.config["UPLOAD_TMP_DIR_ABS"])
@@ -652,11 +678,33 @@ def upload_chunk(upload_id: str):
 
 
 @uploads_api_bp.post("/<upload_id>/cancel")
+@csrf.exempt
 def cancel_upload(upload_id: str):
 	user_id, auth_error = _api_login_required()
 	if auth_error:
 		return auth_error
 	request_id = str(uuid.uuid4())
+	csrf_present = bool((request.headers.get("X-CSRFToken") or request.headers.get("X-CSRF-Token") or request.form.get("csrf_token") or "").strip())
+	xhr_present = request.headers.get("X-Requested-With", "") == "XMLHttpRequest"
+	csrf_ok, csrf_reason = _validate_cancel_csrf()
+	if not csrf_ok:
+		current_app.logger.info(
+			"CANCEL_ATTEMPT request_id=%s user_id=%s upload_id=%s has_csrf=%s has_xhr=%s decision=rejected:%s chunks_deleted_count=0 files_deleted_count=0",
+			request_id,
+			user_id,
+			upload_id,
+			csrf_present,
+			xhr_present,
+			csrf_reason,
+		)
+		return _json_error("CSRF token is required", 400, csrf_reason)
+
+	decision = "cancel_ok"
+	status_response = "canceled"
+	cleanup_stats = {
+		"chunks_deleted_count": 0,
+		"files_deleted_count": 0,
+	}
 
 	with get_db(current_app) as conn:
 		upload_row = conn.execute(
@@ -664,9 +712,22 @@ def cancel_upload(upload_id: str):
 			(upload_id, user_id),
 		).fetchone()
 		if not upload_row:
+			current_app.logger.info(
+				"CANCEL_ATTEMPT request_id=%s user_id=%s upload_id=%s has_csrf=%s has_xhr=%s decision=rejected:not_found chunks_deleted_count=0 files_deleted_count=0",
+				request_id,
+				user_id,
+				upload_id,
+				csrf_present,
+				xhr_present,
+			)
 			return _json_error("upload not found", 404)
-		if upload_row["status"] == "completed":
-			return _json_error("completed uploads cannot be canceled", 409)
+
+		status_now = str(upload_row["status"])
+		status_after_cleanup = "canceled"
+		if status_now in ("completed", "canceled"):
+			decision = f"idempotent:{status_now}"
+			status_response = status_now
+			status_after_cleanup = None
 
 		cleanup_stats = cleanup_upload_artifacts(
 			conn=conn,
@@ -675,19 +736,23 @@ def cancel_upload(upload_id: str):
 			target_path=upload_row["target_path"] or "",
 			filename_final=upload_row["filename_final"],
 			request_id=request_id,
+			status_after_cleanup=status_after_cleanup,
 		)
 		conn.commit()
 
 	current_app.logger.info(
-		"CANCEL request_id=%s user_id=%s upload_id=%s chunks_deleted_count=%s files_deleted_count=%s decision=cancel_ok",
+		"CANCEL_ATTEMPT request_id=%s user_id=%s upload_id=%s has_csrf=%s has_xhr=%s decision=%s chunks_deleted_count=%s files_deleted_count=%s",
 		request_id,
 		user_id,
 		upload_id,
+		csrf_present,
+		xhr_present,
+		decision,
 		cleanup_stats["chunks_deleted_count"],
 		cleanup_stats["files_deleted_count"],
 	)
 
-	return jsonify({"ok": True, "status": "canceled"})
+	return jsonify({"ok": True, "status": status_response})
 
 
 @uploads_api_bp.post("/<upload_id>/complete")
