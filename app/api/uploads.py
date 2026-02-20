@@ -155,6 +155,102 @@ def _remove_upload_tmp_dir(user_id: int, upload_id: str, request_id: str | None 
 	return True
 
 
+def cleanup_upload_artifacts(conn, upload_id: str, user_id: int, target_path: str, filename_final: str, request_id: str | None = None) -> dict:
+	chunks_deleted_count = 0
+	files_deleted_count = 0
+	now_db = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+
+	chunk_count_row = conn.execute(
+		"SELECT COUNT(*) AS c FROM upload_chunks WHERE upload_id = ?",
+		(upload_id,),
+	).fetchone()
+	chunks_deleted_count = int(chunk_count_row["c"]) if chunk_count_row else 0
+	conn.execute("DELETE FROM upload_chunks WHERE upload_id = ?", (upload_id,))
+	conn.execute(
+		"UPDATE uploads SET status = 'canceled', updated_at = ?, last_activity_at = ? WHERE id = ? AND user_id = ?",
+		(now_db, now_db, upload_id, user_id),
+	)
+
+	upload_root_dir = resolve_chunk_upload_dir(user_id, upload_id).parent
+	tmp_root = Path(current_app.config["UPLOAD_TMP_DIR_ABS"])
+	can_remove_tmp = _is_path_within(tmp_root, upload_root_dir) and str(user_id) in upload_root_dir.resolve(strict=False).parts and upload_id in upload_root_dir.resolve(strict=False).parts
+	if can_remove_tmp and upload_root_dir.exists():
+		try:
+			for path in upload_root_dir.rglob("*"):
+				if path.is_file():
+					files_deleted_count += 1
+					current_app.logger.debug(
+						"CANCEL request_id=%s removing tmp file user_id=%s upload_id=%s path=%s",
+						request_id or "-",
+						user_id,
+						upload_id,
+						str(path.resolve(strict=False)),
+					)
+			shutil.rmtree(upload_root_dir)
+		except OSError as exc:
+			current_app.logger.warning(
+				"CANCEL request_id=%s failed tmp cleanup user_id=%s upload_id=%s dir=%s error=%s",
+				request_id or "-",
+				user_id,
+				upload_id,
+				str(upload_root_dir.resolve(strict=False)),
+				exc,
+			)
+	elif upload_root_dir.exists():
+		current_app.logger.warning(
+			"CANCEL request_id=%s skipped tmp cleanup outside root user_id=%s upload_id=%s tmp_root=%s candidate=%s",
+			request_id or "-",
+			user_id,
+			upload_id,
+			str(tmp_root.resolve(strict=False)),
+			str(upload_root_dir.resolve(strict=False)),
+		)
+
+	try:
+		final_path = resolve_final_file_path(user_id, target_path or "", filename_final)
+		parent_dir = final_path.parent
+		candidate_paths = [
+			final_path.with_name(f"{final_path.name}.{upload_id}.uploading"),
+			final_path.with_name(f"{final_path.name}.{upload_id}.temp_final"),
+			final_path.with_name(f"{final_path.name}.{upload_id}.tmp"),
+		]
+		for artifact_path in candidate_paths:
+			if artifact_path.exists() and _is_path_within(parent_dir, artifact_path):
+				try:
+					artifact_path.unlink(missing_ok=True)
+					files_deleted_count += 1
+					current_app.logger.debug(
+						"CANCEL request_id=%s removing assembled artifact user_id=%s upload_id=%s path=%s",
+						request_id or "-",
+						user_id,
+						upload_id,
+						str(artifact_path.resolve(strict=False)),
+					)
+				except OSError as exc:
+					current_app.logger.warning(
+						"CANCEL request_id=%s failed assembled artifact cleanup user_id=%s upload_id=%s path=%s error=%s",
+						request_id or "-",
+						user_id,
+						upload_id,
+						str(artifact_path.resolve(strict=False)),
+						exc,
+					)
+	except ValueError:
+		current_app.logger.warning(
+			"CANCEL request_id=%s skipped assembled artifact cleanup due to invalid path user_id=%s upload_id=%s target_path=%s filename_final=%s",
+			request_id or "-",
+			user_id,
+			upload_id,
+			target_path,
+			filename_final,
+		)
+
+	return {
+		"chunks_deleted_count": chunks_deleted_count,
+		"files_deleted_count": files_deleted_count,
+	}
+
+
 @uploads_api_bp.post("/init")
 def init_upload():
 	user_id, auth_error = _api_login_required()
@@ -370,12 +466,17 @@ def upload_status(upload_id: str):
 		if not upload_row:
 			return _json_error("upload not found", 404)
 
-		chunk_rows = conn.execute(
-			"SELECT chunk_index FROM upload_chunks WHERE upload_id = ? ORDER BY chunk_index ASC",
-			(upload_id,),
-		).fetchall()
-		uploaded_chunks = [int(row["chunk_index"]) for row in chunk_rows]
-		missing_chunks = compute_missing_chunks(int(upload_row["total_chunks"]), uploaded_chunks)
+		total_chunks = int(upload_row["total_chunks"])
+		if upload_row["status"] == "canceled":
+			uploaded_chunks = []
+			missing_chunks = list(range(total_chunks))
+		else:
+			chunk_rows = conn.execute(
+				"SELECT chunk_index FROM upload_chunks WHERE upload_id = ? ORDER BY chunk_index ASC",
+				(upload_id,),
+			).fetchall()
+			uploaded_chunks = [int(row["chunk_index"]) for row in chunk_rows]
+			missing_chunks = compute_missing_chunks(total_chunks, uploaded_chunks)
 
 		now_db = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
 		conn.execute(
@@ -388,7 +489,7 @@ def upload_status(upload_id: str):
 		{
 			"upload_id": upload_id,
 			"status": upload_row["status"],
-			"total_chunks": int(upload_row["total_chunks"]),
+			"total_chunks": total_chunks,
 			"uploaded_chunks": uploaded_chunks,
 			"missing_chunks": missing_chunks,
 			"expected_total_size": int(upload_row["total_size"]),
@@ -555,10 +656,11 @@ def cancel_upload(upload_id: str):
 	user_id, auth_error = _api_login_required()
 	if auth_error:
 		return auth_error
+	request_id = str(uuid.uuid4())
 
 	with get_db(current_app) as conn:
 		upload_row = conn.execute(
-			"SELECT id, status FROM uploads WHERE id = ? AND user_id = ?",
+			"SELECT id, status, target_path, filename_final FROM uploads WHERE id = ? AND user_id = ?",
 			(upload_id, user_id),
 		).fetchone()
 		if not upload_row:
@@ -566,20 +668,24 @@ def cancel_upload(upload_id: str):
 		if upload_row["status"] == "completed":
 			return _json_error("completed uploads cannot be canceled", 409)
 
-		now_db = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
-		conn.execute(
-			"DELETE FROM upload_chunks WHERE upload_id = ?",
-			(upload_id,),
-		)
-		conn.execute(
-			"UPDATE uploads SET status = 'canceled', updated_at = ?, last_activity_at = ? WHERE id = ?",
-			(now_db, now_db, upload_id),
+		cleanup_stats = cleanup_upload_artifacts(
+			conn=conn,
+			upload_id=upload_id,
+			user_id=user_id,
+			target_path=upload_row["target_path"] or "",
+			filename_final=upload_row["filename_final"],
+			request_id=request_id,
 		)
 		conn.commit()
 
-	chunk_dir = resolve_chunk_upload_dir(user_id, upload_id).parent
-	if chunk_dir.exists():
-		_remove_upload_tmp_dir(user_id, upload_id)
+	current_app.logger.info(
+		"CANCEL request_id=%s user_id=%s upload_id=%s chunks_deleted_count=%s files_deleted_count=%s decision=cancel_ok",
+		request_id,
+		user_id,
+		upload_id,
+		cleanup_stats["chunks_deleted_count"],
+		cleanup_stats["files_deleted_count"],
+	)
 
 	return jsonify({"ok": True, "status": "canceled"})
 

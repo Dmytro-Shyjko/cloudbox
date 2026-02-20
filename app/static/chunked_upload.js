@@ -52,6 +52,8 @@
 		speedSamples: [],
 		retryText: '-',
 		lastError: '-',
+		cancelRequested: false,
+		cancelInFlight: false,
 	};
 
 	function ensureExtraDetails() {
@@ -200,11 +202,11 @@
 
 	function setButtonsForStatus(status) {
 		const isPaused = status === 'paused';
-		const isDone = status === 'done';
-		const isActive = status === 'uploading' || status === 'completing' || status === 'resuming' || status === 'preparing';
+		const isCancelable = status === 'uploading' || status === 'resuming' || status === 'preparing' || status === 'completing';
+		const isActive = isCancelable;
 		pauseBtn.disabled = !isActive;
 		resumeBtn.disabled = !(isPaused || status === 'error');
-		cancelBtn.disabled = isDone;
+		cancelBtn.disabled = !isCancelable || state.cancelInFlight;
 	}
 
 	function updateProgress(uploadedCount, totalChunks) {
@@ -306,6 +308,9 @@
 		if (opts.method && opts.method.toUpperCase() === 'POST' && csrfToken) {
 			opts.headers['X-CSRFToken'] = csrfToken;
 		}
+		if (!opts.signal && state.controller) {
+			opts.signal = state.controller.signal;
+		}
 		const response = await fetch(url, opts);
 		let payload = {};
 		try {
@@ -381,15 +386,41 @@
 		return statusCode === 429 || statusCode >= 500;
 	}
 
-	function delay(ms) {
-		return new Promise(function (resolve) {
-			window.setTimeout(resolve, ms);
+	function delay(ms, signal) {
+		return new Promise(function (resolve, reject) {
+			const timer = window.setTimeout(function () {
+				cleanup();
+				resolve();
+			}, ms);
+			function onAbort() {
+				cleanup();
+				const abortError = new Error('Aborted');
+				abortError.name = 'AbortError';
+				reject(abortError);
+			}
+			function cleanup() {
+				window.clearTimeout(timer);
+				if (signal) {
+					signal.removeEventListener('abort', onAbort);
+				}
+			}
+			if (signal) {
+				if (signal.aborted) {
+					onAbort();
+					return;
+				}
+				signal.addEventListener('abort', onAbort);
+			}
 		});
 	}
 
 	async function uploadChunkWithRetry(uploadId, chunkIndex, chunkBlob) {
 		for (let attempt = 1; attempt <= retryDelaysMs.length; attempt += 1) {
-			state.controller = new AbortController();
+			if (state.cancelRequested) {
+				const abortError = new Error('Aborted');
+				abortError.name = 'AbortError';
+				throw abortError;
+			}
 			try {
 				const response = await fetch(`/api/uploads/${encodeURIComponent(uploadId)}/chunk`, {
 					method: 'POST',
@@ -400,7 +431,7 @@
 						'X-Chunk-Size': String(chunkBlob.size),
 					},
 					body: chunkBlob,
-					signal: state.controller.signal,
+					signal: state.controller ? state.controller.signal : undefined,
 				});
 				let payload = {};
 				try {
@@ -416,11 +447,11 @@
 				const error = new Error(payload.error || `Chunk upload failed (${response.status})`);
 				error.status = response.status;
 				error.payload = payload;
-				if (isRetryable(response.status) && attempt < retryDelaysMs.length) {
+				if (isRetryable(response.status) && attempt < retryDelaysMs.length && !state.cancelRequested) {
 					state.retryText = `Retry ${attempt + 1}/${retryDelaysMs.length}...`;
 					state.lastError = parseErrorMessage(error);
 					setExtraDetails();
-					await delay(retryDelaysMs[attempt - 1]);
+					await delay(retryDelaysMs[attempt - 1], state.controller ? state.controller.signal : null);
 					continue;
 				}
 				throw error;
@@ -428,11 +459,11 @@
 				if (error && error.name === 'AbortError') {
 					throw error;
 				}
-				if (isRetryable(error.status || 0) && attempt < retryDelaysMs.length) {
+				if (isRetryable(error.status || 0) && attempt < retryDelaysMs.length && !state.cancelRequested) {
 					state.retryText = `Retry ${attempt + 1}/${retryDelaysMs.length}...`;
 					state.lastError = parseErrorMessage(error);
 					setExtraDetails();
-					await delay(retryDelaysMs[attempt - 1]);
+					await delay(retryDelaysMs[attempt - 1], state.controller ? state.controller.signal : null);
 					continue;
 				}
 				throw error;
@@ -458,6 +489,17 @@
 		setStatus('Upload paused. You can resume.');
 	}
 
+	function markCanceled(message) {
+		state.status = 'canceled';
+		state.cancelInFlight = false;
+		state.cancelRequested = true;
+		setButtonsForStatus('canceled');
+		setSubmitDisabled(false);
+		setStatus(message || 'Upload canceled. Start a new upload to continue.');
+		clearStoredState(state.file);
+		hideResumePrompt();
+	}
+
 	function markDone(message) {
 		state.status = 'done';
 		setButtonsForStatus('done');
@@ -476,6 +518,8 @@
 		state.uploadedBytes = 0;
 		state.controller = null;
 		state.speedSamples = [];
+		state.cancelRequested = false;
+		state.cancelInFlight = false;
 	}
 
 	function showResumePrompt(savedState, message) {
@@ -540,6 +584,9 @@
 		state.speedSamples = [];
 		state.lastError = '-';
 		state.retryText = '-';
+		state.cancelRequested = false;
+		state.cancelInFlight = false;
+		state.controller = new AbortController();
 		recordSpeedSample(0);
 		setSubmitDisabled(true);
 		showModal(file);
@@ -582,6 +629,11 @@
 				markDone('Upload already completed.');
 				return;
 			}
+			if (statusPayload.status === 'canceled') {
+				clearStoredState(file);
+				markCanceled('This upload was canceled and cannot be resumed. Start a new upload.');
+				return;
+			}
 
 			const totalChunks = Number(statusPayload.total_chunks || (saved && saved.totalChunks) || Math.ceil(file.size / defaultChunkSize));
 			state.totalChunks = totalChunks;
@@ -593,7 +645,7 @@
 			updateProgress(uploadedCount, totalChunks);
 
 			for (const chunkIndex of missingChunks) {
-				if (state.status !== 'uploading' && state.status !== 'resuming') {
+				if ((state.status !== 'uploading' && state.status !== 'resuming') || state.cancelRequested) {
 					break;
 				}
 				state.retryText = '-';
@@ -607,7 +659,7 @@
 				updateProgress(state.uploadedCount + 1, totalChunks);
 			}
 
-			if (state.status !== 'uploading' && state.status !== 'resuming') {
+			if ((state.status !== 'uploading' && state.status !== 'resuming') || state.cancelRequested) {
 				return;
 			}
 
@@ -623,6 +675,10 @@
 			markDone('Upload complete.');
 		} catch (err) {
 			if (err && err.name === 'AbortError') {
+				if (state.cancelRequested) {
+					markCanceled('Upload canceled. Start a new upload to continue.');
+					return;
+				}
 				markPaused();
 				return;
 			}
@@ -675,26 +731,44 @@
 	}
 
 	async function cancelUpload() {
+		if (state.cancelInFlight || state.status === 'done' || state.status === 'canceled') {
+			return;
+		}
+		if (!state.uploadId) {
+			markCanceled('Upload canceled. Start a new upload to continue.');
+			return;
+		}
+		if (!window.confirm('Cancel this upload? Uploaded chunks will be deleted and cannot be resumed.')) {
+			return;
+		}
+
+		const cancelUploadId = state.uploadId;
+		state.cancelRequested = true;
+		state.cancelInFlight = true;
+		setButtonsForStatus(state.status);
 		if (state.controller) {
 			state.controller.abort();
 		}
-		if (state.uploadId) {
-			try {
-				await jsonRequest(`/api/uploads/${encodeURIComponent(state.uploadId)}/cancel`, {
-					method: 'POST',
-					headers: { 'Content-Type': 'application/json' },
-					body: JSON.stringify({}),
-				});
-			} catch (_err) {
-				// ignore cancel errors in UI flow
-			}
+
+		try {
+			await jsonRequest(`/api/uploads/${encodeURIComponent(cancelUploadId)}/cancel`, {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({}),
+				signal: null,
+			});
+			clearStoredState(state.file);
+			markCanceled('Upload canceled. Start a new upload to continue.');
+		} catch (err) {
+			clearStoredState(state.file);
+			state.cancelInFlight = false;
+			state.status = 'error';
+			setButtonsForStatus('error');
+			setSubmitDisabled(false);
+			state.lastError = `Cancel failed: ${parseErrorMessage(err)}`;
+			setExtraDetails();
+			setStatus('Upload canceled locally, but server cleanup failed. Start a new upload.');
 		}
-		clearSelectionAndState();
-		state.status = 'idle';
-		state.isUploading = false;
-		setSubmitDisabled(false);
-		hideModal({ reset: true });
-		hideResumePrompt();
 	}
 
 	fileInput.addEventListener('change', function () {
@@ -708,7 +782,7 @@
 		detailsSize.textContent = formatBytes(file.size);
 		updateProgress(0, Math.ceil(file.size / defaultChunkSize));
 		setStatus('Ready to upload. Press upload to begin.');
-		setButtonsForStatus('paused');
+		setButtonsForStatus('preparing');
 		resumeBtn.disabled = true;
 		maybePromptResumeForFile(file);
 	});
